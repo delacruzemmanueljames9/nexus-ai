@@ -154,18 +154,14 @@ export default function ChatPage() {
       setActiveConversationId(conversationId);
     }
 
-    // Build user message content
     let userMessageContent: MessageContent["content"] = trimmed;
     let userMessageText = trimmed;
 
     if (fileToSend) {
       const isImage = fileToSend.type.startsWith("image/");
-
-      // Upload to Supabase Storage
       await uploadFileToSupabase(fileToSend, conversationId);
 
       if (isImage) {
-        // Convert to base64 for Groq vision
         const base64 = await fileToBase64(fileToSend);
         const dataUrl = `data:${fileToSend.type};base64,${base64}`;
         userMessageContent = [
@@ -174,7 +170,6 @@ export default function ChatPage() {
         ];
         userMessageText = trimmed ? `${trimmed}\n\n[Image: ${fileToSend.name}]` : `[Image: ${fileToSend.name}]`;
       } else {
-        // Extract text from PDF/TXT/CSV
         const extractedText = await extractTextFromFile(fileToSend);
         const fileContext = `\n\n[File: ${fileToSend.name}]\n${extractedText}`;
         userMessageContent = (trimmed || "") + fileContext;
@@ -182,7 +177,6 @@ export default function ChatPage() {
       }
     }
 
-    // Add user message to UI
     const tempUserMsg: Message = {
       id: `temp-user-${Date.now()}`,
       conversation_id: conversationId,
@@ -192,19 +186,16 @@ export default function ChatPage() {
     };
     setMessages((prev) => [...prev, tempUserMsg]);
 
-    // Save user message to Supabase
     const savedUserMsg = await saveMessage(conversationId, "user", userMessageText);
     if (savedUserMsg) {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
-    // Build history for Groq
     const history: MessageContent[] = [
       ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
       { role: "user", content: userMessageContent },
     ];
 
-    // Stream assistant response
     const tempAssistantMsg: Message = {
       id: `temp-assistant-${Date.now()}`,
       conversation_id: conversationId,
@@ -412,7 +403,6 @@ export default function ChatPage() {
             )}
 
             <div className="relative flex items-end gap-2 bg-zinc-900 border border-zinc-700/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/60 focus-within:ring-1 focus-within:ring-violet-500/20 transition-all">
-              {/* File attach button */}
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={streaming}
@@ -426,7 +416,20 @@ export default function ChatPage() {
                 accept="image/*,.pdf,.txt,.csv"
                 className="hidden"
                 onChange={(e) => {
-                  setAttachedFile(e.target.files?.[0] ?? null);
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const maxSize = 50 * 1024 * 1024; // 50MB
+                    if (file.size > maxSize) {
+                      toast({
+                        title: "File too large",
+                        description: "Maximum file size is 50MB.",
+                        variant: "destructive",
+                      });
+                      e.target.value = "";
+                      return;
+                    }
+                    setAttachedFile(file);
+                  }
                   e.target.value = "";
                 }}
               />
