@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/nexus-ai",
+  "name": "nexus-ai",
   "version": "0.0.0",
   "private": true,
   "type": "module",
