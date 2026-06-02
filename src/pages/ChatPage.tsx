@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
-import { streamGroqResponse, generateTitle } from "@/lib/groq";
+import { streamGroqResponse, generateTitle, extractTextFromFile, fileToBase64, type MessageContent } from "@/lib/groq";
 import { useAuth } from "@/context/AuthContext";
 import type { Conversation, Message } from "@/types";
 import Sidebar from "@/components/Sidebar";
 import MessageBubble from "@/components/MessageBubble";
-import { Send, Loader2, Menu, Sparkles, StopCircle } from "lucide-react";
+import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function ChatPage() {
@@ -20,9 +20,11 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const abortRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -46,12 +48,7 @@ export default function ChatPage() {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("loadConversations error:", error);
-      toast({
-        title: "Failed to load conversations",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Failed to load conversations", description: error.message, variant: "destructive" });
     } else {
       setConversations(data ?? []);
     }
@@ -83,10 +80,7 @@ export default function ChatPage() {
   };
 
   const createConversation = async (firstMessage: string): Promise<string | null> => {
-    const title = firstMessage.length > 50
-      ? firstMessage.slice(0, 50) + "…"
-      : firstMessage;
-
+    const title = firstMessage.length > 50 ? firstMessage.slice(0, 50) + "…" : firstMessage;
     const { data, error } = await supabase
       .from("conversations")
       .insert({ user_id: user!.id, title })
@@ -94,14 +88,9 @@ export default function ChatPage() {
       .single();
 
     if (error || !data) {
-      toast({
-        title: "Failed to create conversation",
-        description: error?.message ?? "Unknown error",
-        variant: "destructive",
-      });
+      toast({ title: "Failed to create conversation", description: error?.message ?? "Unknown error", variant: "destructive" });
       return null;
     }
-
     setConversations((prev) => [data, ...prev]);
     return data.id;
   };
@@ -113,85 +102,109 @@ export default function ChatPage() {
       .select()
       .single();
 
-    if (error || !data) {
-      console.error("saveMessage error:", error);
-      return null;
-    }
+    if (error || !data) return null;
     return data;
   };
 
   const updateConversationTimestamp = async (conversationId: string) => {
     const now = new Date().toISOString();
-    await supabase
-      .from("conversations")
-      .update({ updated_at: now })
-      .eq("id", conversationId);
-
+    await supabase.from("conversations").update({ updated_at: now }).eq("id", conversationId);
     setConversations((prev) => {
-      const updated = prev.map((c) =>
-        c.id === conversationId ? { ...c, updated_at: now } : c
-      );
-      return updated.sort(
-        (a, b) =>
-          new Date(b.updated_at ?? b.created_at).getTime() -
-          new Date(a.updated_at ?? a.created_at).getTime()
+      const updated = prev.map((c) => c.id === conversationId ? { ...c, updated_at: now } : c);
+      return updated.sort((a, b) =>
+        new Date(b.updated_at ?? b.created_at).getTime() - new Date(a.updated_at ?? a.created_at).getTime()
       );
     });
   };
 
-  const autoRenameConversation = async (
-    conversationId: string,
-    userMsg: string,
-    assistantMsg: string
-  ) => {
+  const autoRenameConversation = async (conversationId: string, userMsg: string, assistantMsg: string) => {
     const title = await generateTitle(userMsg, assistantMsg);
     if (!title) return;
+    await supabase.from("conversations").update({ title }).eq("id", conversationId);
+    setConversations((prev) => prev.map((c) => c.id === conversationId ? { ...c, title } : c));
+  };
 
-    await supabase
-      .from("conversations")
-      .update({ title })
-      .eq("id", conversationId);
-
-    setConversations((prev) =>
-      prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
-    );
+  const uploadFileToSupabase = async (file: File, conversationId: string): Promise<string | null> => {
+    const ext = file.name.split(".").pop();
+    const path = `${user!.id}/${conversationId}/${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from("attachments").upload(path, file);
+    if (error) {
+      console.error("Upload error:", error);
+      return null;
+    }
+    const { data } = supabase.storage.from("attachments").getPublicUrl(path);
+    return data.publicUrl;
   };
 
   const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed || streaming) return;
+    if (!trimmed && !attachedFile || streaming) return;
 
+    const fileToSend = attachedFile;
     setInput("");
+    setAttachedFile(null);
     autoResizeTextarea();
 
     let conversationId = activeConversationId;
     const isFirstMessage = messages.length === 0;
 
     if (!conversationId) {
-      conversationId = await createConversation(trimmed);
+      conversationId = await createConversation(trimmed || fileToSend?.name || "File");
       if (!conversationId) return;
       setActiveConversationId(conversationId);
     }
 
+    // Build user message content
+    let userMessageContent: MessageContent["content"] = trimmed;
+    let userMessageText = trimmed;
+
+    if (fileToSend) {
+      const isImage = fileToSend.type.startsWith("image/");
+
+      // Upload to Supabase Storage
+      await uploadFileToSupabase(fileToSend, conversationId);
+
+      if (isImage) {
+        // Convert to base64 for Groq vision
+        const base64 = await fileToBase64(fileToSend);
+        const dataUrl = `data:${fileToSend.type};base64,${base64}`;
+        userMessageContent = [
+          ...(trimmed ? [{ type: "text", text: trimmed }] : []),
+          { type: "image_url", image_url: { url: dataUrl } },
+        ];
+        userMessageText = trimmed ? `${trimmed}\n\n[Image: ${fileToSend.name}]` : `[Image: ${fileToSend.name}]`;
+      } else {
+        // Extract text from PDF/TXT/CSV
+        const extractedText = await extractTextFromFile(fileToSend);
+        const fileContext = `\n\n[File: ${fileToSend.name}]\n${extractedText}`;
+        userMessageContent = (trimmed || "") + fileContext;
+        userMessageText = (trimmed || "") + fileContext;
+      }
+    }
+
+    // Add user message to UI
     const tempUserMsg: Message = {
       id: `temp-user-${Date.now()}`,
       conversation_id: conversationId,
       role: "user",
-      content: trimmed,
+      content: userMessageText,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempUserMsg]);
 
-    const savedUserMsg = await saveMessage(conversationId, "user", trimmed);
+    // Save user message to Supabase
+    const savedUserMsg = await saveMessage(conversationId, "user", userMessageText);
     if (savedUserMsg) {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
-    const history = [
+    // Build history for Groq
+    const history: MessageContent[] = [
       ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-      { role: "user" as const, content: trimmed },
+      { role: "user", content: userMessageContent },
     ];
 
+    // Stream assistant response
     const tempAssistantMsg: Message = {
       id: `temp-assistant-${Date.now()}`,
       conversation_id: conversationId,
@@ -208,35 +221,22 @@ export default function ChatPage() {
     try {
       await streamGroqResponse(history, ({ content, done }) => {
         if (abortRef.current) return;
-
         if (!done) {
           fullContent += content;
-          setMessages((prev) =>
-            prev.map((m) => m.id === tempAssistantMsg.id ? { ...m, content: fullContent } : m)
-          );
+          setMessages((prev) => prev.map((m) => m.id === tempAssistantMsg.id ? { ...m, content: fullContent } : m));
         } else {
           if (fullContent) {
             saveMessage(conversationId!, "assistant", fullContent).then((saved) => {
-              if (saved) {
-                setMessages((prev) =>
-                  prev.map((m) => m.id === tempAssistantMsg.id ? saved : m)
-                );
-              }
+              if (saved) setMessages((prev) => prev.map((m) => m.id === tempAssistantMsg.id ? saved : m));
             });
             updateConversationTimestamp(conversationId!);
-            if (isFirstMessage) {
-              autoRenameConversation(conversationId!, trimmed, fullContent);
-            }
+            if (isFirstMessage) autoRenameConversation(conversationId!, userMessageText, fullContent);
           }
         }
       });
     } catch (err: unknown) {
       if (!abortRef.current) {
-        toast({
-          title: "Error",
-          description: err instanceof Error ? err.message : "Failed to get AI response",
-          variant: "destructive",
-        });
+        toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to get AI response", variant: "destructive" });
         setMessages((prev) => prev.filter((m) => m.id !== tempAssistantMsg.id));
       }
     } finally {
@@ -251,7 +251,6 @@ export default function ChatPage() {
 
   const handleRegenerate = async () => {
     if (!activeConversationId || streaming) return;
-
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastAssistant || !lastUser) return;
@@ -260,7 +259,7 @@ export default function ChatPage() {
     const messagesWithoutLast = messages.filter((m) => m.id !== lastAssistant.id);
     setMessages(messagesWithoutLast);
 
-    const history = messagesWithoutLast.map((m) => ({
+    const history: MessageContent[] = messagesWithoutLast.map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
@@ -275,26 +274,18 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, tempAssistantMsg]);
     setStreaming(true);
     abortRef.current = false;
-
     let fullContent = "";
 
     try {
       await streamGroqResponse(history, ({ content, done }) => {
         if (abortRef.current) return;
-
         if (!done) {
           fullContent += content;
-          setMessages((prev) =>
-            prev.map((m) => m.id === tempAssistantMsg.id ? { ...m, content: fullContent } : m)
-          );
+          setMessages((prev) => prev.map((m) => m.id === tempAssistantMsg.id ? { ...m, content: fullContent } : m));
         } else {
           if (fullContent) {
             saveMessage(activeConversationId, "assistant", fullContent).then((saved) => {
-              if (saved) {
-                setMessages((prev) =>
-                  prev.map((m) => m.id === tempAssistantMsg.id ? saved : m)
-                );
-              }
+              if (saved) setMessages((prev) => prev.map((m) => m.id === tempAssistantMsg.id ? saved : m));
             });
             updateConversationTimestamp(activeConversationId);
           }
@@ -302,11 +293,7 @@ export default function ChatPage() {
       });
     } catch (err: unknown) {
       if (!abortRef.current) {
-        toast({
-          title: "Error",
-          description: err instanceof Error ? err.message : "Failed to regenerate response",
-          variant: "destructive",
-        });
+        toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to regenerate", variant: "destructive" });
         setMessages((prev) => prev.filter((m) => m.id !== tempAssistantMsg.id));
       }
     } finally {
@@ -318,12 +305,12 @@ export default function ChatPage() {
     setActiveConversationId(null);
     setMessages([]);
     setInput("");
+    setAttachedFile(null);
   };
 
   const handleDeleteConversation = async (id: string) => {
     await supabase.from("messages").delete().eq("conversation_id", id);
     await supabase.from("conversations").delete().eq("id", id);
-
     setConversations((prev) => prev.filter((c) => c.id !== id));
     if (activeConversationId === id) {
       setActiveConversationId(null);
@@ -363,7 +350,6 @@ export default function ChatPage() {
         onCloseMobile={() => setSidebarOpen(false)}
       />
 
-      {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800/60 bg-[#0d0d0d]/80 backdrop-blur-sm flex-shrink-0">
@@ -412,7 +398,39 @@ export default function ChatPage() {
         {/* Input area */}
         <div className="flex-shrink-0 px-4 py-4 border-t border-zinc-800/60 bg-[#0d0d0d] sticky bottom-0">
           <div className="max-w-3xl mx-auto">
+            {/* File preview */}
+            {attachedFile && (
+              <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-zinc-800/60 rounded-xl border border-zinc-700/50">
+                <span className="text-xs text-zinc-400 truncate flex-1">{attachedFile.name}</span>
+                <button
+                  onClick={() => setAttachedFile(null)}
+                  className="text-zinc-500 hover:text-zinc-200 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             <div className="relative flex items-end gap-2 bg-zinc-900 border border-zinc-700/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/60 focus-within:ring-1 focus-within:ring-violet-500/20 transition-all">
+              {/* File attach button */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={streaming}
+                className="flex-shrink-0 w-8 h-8 rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/60 flex items-center justify-center transition-all disabled:opacity-30"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf,.txt,.csv"
+                className="hidden"
+                onChange={(e) => {
+                  setAttachedFile(e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
+              />
+
               <textarea
                 ref={textareaRef}
                 data-testid="input-message"
@@ -425,6 +443,7 @@ export default function ChatPage() {
                 className="flex-1 bg-transparent text-sm text-white placeholder:text-zinc-600 resize-none focus:outline-none min-h-[24px] max-h-[160px] leading-relaxed disabled:opacity-50"
                 style={{ height: "24px" }}
               />
+
               {streaming ? (
                 <button
                   data-testid="button-stop"
@@ -437,7 +456,7 @@ export default function ChatPage() {
                 <button
                   data-testid="button-send"
                   onClick={handleSend}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && !attachedFile}
                   className="flex-shrink-0 w-8 h-8 rounded-xl bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-md shadow-violet-900/30"
                 >
                   <Send className="w-4 h-4" />
