@@ -32,7 +32,6 @@ export default function ChatPage() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Load conversations
   useEffect(() => {
     if (!user) return;
     loadConversations();
@@ -59,7 +58,6 @@ export default function ChatPage() {
     setLoadingConversations(false);
   };
 
-  // Load messages for active conversation
   useEffect(() => {
     if (!activeConversationId) {
       setMessages([]);
@@ -96,10 +94,9 @@ export default function ChatPage() {
       .single();
 
     if (error || !data) {
-      console.error("createConversation error:", error);
       toast({
         title: "Failed to create conversation",
-        description: error?.message ?? "Unknown error — check console for details",
+        description: error?.message ?? "Unknown error",
         variant: "destructive",
       });
       return null;
@@ -125,13 +122,11 @@ export default function ChatPage() {
 
   const updateConversationTimestamp = async (conversationId: string) => {
     const now = new Date().toISOString();
-    // Best-effort — silently ignore if updated_at column doesn't exist
     await supabase
       .from("conversations")
       .update({ updated_at: now })
       .eq("id", conversationId);
 
-    // Always bubble the conversation to the top in local state
     setConversations((prev) => {
       const updated = prev.map((c) =>
         c.id === conversationId ? { ...c, updated_at: now } : c
@@ -152,13 +147,11 @@ export default function ChatPage() {
     const title = await generateTitle(userMsg, assistantMsg);
     if (!title) return;
 
-    // Update in Supabase (best-effort)
     await supabase
       .from("conversations")
       .update({ title })
       .eq("id", conversationId);
 
-    // Animate title in sidebar
     setConversations((prev) =>
       prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
     );
@@ -174,14 +167,12 @@ export default function ChatPage() {
     let conversationId = activeConversationId;
     const isFirstMessage = messages.length === 0;
 
-    // Create new conversation if needed
     if (!conversationId) {
       conversationId = await createConversation(trimmed);
       if (!conversationId) return;
       setActiveConversationId(conversationId);
     }
 
-    // Add user message to UI immediately
     const tempUserMsg: Message = {
       id: `temp-user-${Date.now()}`,
       conversation_id: conversationId,
@@ -191,19 +182,16 @@ export default function ChatPage() {
     };
     setMessages((prev) => [...prev, tempUserMsg]);
 
-    // Save user message to Supabase
     const savedUserMsg = await saveMessage(conversationId, "user", trimmed);
     if (savedUserMsg) {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
-    // Build history for Groq (existing + new)
     const history = [
       ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
       { role: "user" as const, content: trimmed },
     ];
 
-    // Start streaming assistant response
     const tempAssistantMsg: Message = {
       id: `temp-assistant-${Date.now()}`,
       conversation_id: conversationId,
@@ -227,7 +215,6 @@ export default function ChatPage() {
             prev.map((m) => m.id === tempAssistantMsg.id ? { ...m, content: fullContent } : m)
           );
         } else {
-          // Done streaming — save to Supabase
           if (fullContent) {
             saveMessage(conversationId!, "assistant", fullContent).then((saved) => {
               if (saved) {
@@ -237,7 +224,6 @@ export default function ChatPage() {
               }
             });
             updateConversationTimestamp(conversationId!);
-            // Auto-rename on first exchange
             if (isFirstMessage) {
               autoRenameConversation(conversationId!, trimmed, fullContent);
             }
@@ -266,23 +252,19 @@ export default function ChatPage() {
   const handleRegenerate = async () => {
     if (!activeConversationId || streaming) return;
 
-    // Find last assistant message and the user message before it
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastAssistant || !lastUser) return;
 
-    // Delete last assistant message from Supabase + local state
     await supabase.from("messages").delete().eq("id", lastAssistant.id);
     const messagesWithoutLast = messages.filter((m) => m.id !== lastAssistant.id);
     setMessages(messagesWithoutLast);
 
-    // Build history without the last assistant message
     const history = messagesWithoutLast.map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
 
-    // Stream a new response
     const tempAssistantMsg: Message = {
       id: `temp-assistant-${Date.now()}`,
       conversation_id: activeConversationId,
@@ -339,7 +321,6 @@ export default function ChatPage() {
   };
 
   const handleDeleteConversation = async (id: string) => {
-    // Delete messages first, then conversation
     await supabase.from("messages").delete().eq("conversation_id", id);
     await supabase.from("conversations").delete().eq("id", id);
 
@@ -370,7 +351,7 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex h-screen bg-[#0d0d0d] overflow-hidden">
+    <div className="flex h-[100dvh] bg-[#0d0d0d] overflow-hidden">
       <Sidebar
         activeConversationId={activeConversationId}
         onSelectConversation={setActiveConversationId}
@@ -429,7 +410,7 @@ export default function ChatPage() {
         </div>
 
         {/* Input area */}
-        <div className="flex-shrink-0 px-4 py-4 border-t border-zinc-800/60 bg-[#0d0d0d]">
+        <div className="flex-shrink-0 px-4 py-4 border-t border-zinc-800/60 bg-[#0d0d0d] sticky bottom-0">
           <div className="max-w-3xl mx-auto">
             <div className="relative flex items-end gap-2 bg-zinc-900 border border-zinc-700/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/60 focus-within:ring-1 focus-within:ring-violet-500/20 transition-all">
               <textarea
