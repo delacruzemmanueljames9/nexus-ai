@@ -52,23 +52,43 @@ export async function streamGroqResponse(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed === "data: [DONE]") continue;
-      if (!trimmed.startsWith("data: ")) continue;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Process complete lines only
+    let newlineIndex: number;
+    while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+
+      if (!line || line === "data: [DONE]") continue;
+      if (!line.startsWith("data: ")) continue;
+
       try {
-        const json = JSON.parse(trimmed.slice(6));
-        const content = json.choices?.[0]?.delta?.content ?? "";
-        if (content) onChunk({ content, done: false });
+        const json = JSON.parse(line.slice(6));
+        const content = json.choices?.[0]?.delta?.content;
+        if (typeof content === "string" && content) {
+          onChunk({ content, done: false });
+        }
       } catch {
         // skip malformed
       }
     }
   }
+
+  // Process any remaining buffer
+  if (buffer.trim() && buffer.trim() !== "data: [DONE]" && buffer.trim().startsWith("data: ")) {
+    try {
+      const json = JSON.parse(buffer.trim().slice(6));
+      const content = json.choices?.[0]?.delta?.content;
+      if (typeof content === "string" && content) {
+        onChunk({ content, done: false });
+      }
+    } catch {
+      // skip
+    }
+  }
+
   onChunk({ content: "", done: true });
 }
 
