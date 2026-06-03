@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
-import { streamGroqResponse, generateTitle, extractTextFromFile, fileToBase64, type MessageContent } from "@/lib/groq";
+import { streamGroqResponse, generateTitle, extractFileWithResult, fileToBase64, type MessageContent } from "@/lib/groq";
 import { useAuth } from "@/context/AuthContext";
 import type { Conversation, Message } from "@/types";
 import Sidebar from "@/components/Sidebar";
@@ -141,7 +141,6 @@ export default function ChatPage() {
     if ((!trimmed && !attachedFile) || streaming) return;
 
     const fileToSend = attachedFile;
-
     setInput("");
     setAttachedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -176,15 +175,23 @@ export default function ChatPage() {
         userMessageText = trimmed ? `${trimmed}\n\n${imageTag}` : imageTag;
       } else {
         await uploadFileToSupabase(fileToSend, conversationId);
-        try {
-          const extractedText = await extractTextFromFile(fileToSend);
-          const fileContext = `\n\n[File: ${fileToSend.name}]\n${extractedText}`;
-          userMessageContent = (trimmed || "") + fileContext;
-          userMessageText = (trimmed || "") + fileContext;
-        } catch {
-          toast({ title: "File Error", description: `Could not read ${fileToSend.name}.`, variant: "destructive" });
+
+        const extraction = await extractFileWithResult(fileToSend);
+
+        if (extraction.isScanned) {
+          toast({
+            title: "Scanned PDF Detected",
+            description: "This PDF is image-based or scanned and cannot be read. Please use a text-based PDF, Word document (.docx), or copy-paste the content instead.",
+            variant: "destructive",
+          });
+          // Restore input state
+          setAttachedFile(fileToSend);
           return;
         }
+
+        const fileContext = `\n\n[File: ${fileToSend.name}]\n${extraction.text}`;
+        userMessageContent = (trimmed || "") + fileContext;
+        userMessageText = (trimmed || "") + fileContext;
       }
     }
 
@@ -204,7 +211,7 @@ export default function ChatPage() {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
-    const recentMessages = currentMessages.slice(-10);
+    const recentMessages = currentMessages.slice(-6);
     const history: MessageContent[] = recentMessages.map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.id === tempUserMsg.id ? userMessageContent : m.content,
@@ -264,7 +271,7 @@ export default function ChatPage() {
     const messagesWithoutLast = messages.filter((m) => m.id !== lastAssistant.id);
     setMessages(messagesWithoutLast);
 
-    const history: MessageContent[] = messagesWithoutLast.slice(-10).map((m) => ({
+    const history: MessageContent[] = messagesWithoutLast.slice(-6).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
