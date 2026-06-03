@@ -1,31 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#6d28d9"/>
+      <stop offset="0%" style="stop-color:#7c3aed"/>
       <stop offset="100%" style="stop-color:#4338ca"/>
     </linearGradient>
   </defs>
 
-  <!-- Rounded background -->
+  <!-- Full violet background, no transparency -->
   <rect width="512" height="512" rx="115" ry="115" fill="url(#bg)"/>
 
-  <!-- Main big sparkle (center) -->
-  <path d="M256 140 C256 140 268 220 310 256 C268 292 256 372 256 372 C256 372 244 292 202 256 C244 220 256 140 256 140Z" fill="white"/>
-  <path d="M140 256 C140 256 220 268 256 310 C292 268 372 256 372 256 C372 256 292 244 256 202 C220 244 140 256 140 256Z" fill="white"/>
+  <!-- Main center sparkle -->
+  <path d="M256 130 C256 130 270 215 318 256 C270 297 256 382 256 382 C256 382 242 297 194 256 C242 215 256 130 256 130Z" fill="white"/>
+  <path d="M130 256 C130 256 215 270 256 318 C297 270 382 256 382 256 C382 256 297 242 256 194 C215 242 130 256 130 256Z" fill="white"/>
 
-  <!-- Top right small sparkle -->
-  <path d="M360 130 C360 130 365 158 378 165 C365 172 360 200 360 200 C360 200 355 172 342 165 C355 158 360 130 360 130Z" fill="white" opacity="0.9"/>
-  <path d="M330 160 C330 160 358 165 378 165 C358 165 330 170 330 170 C330 170 358 165 330 160Z" fill="white" opacity="0.9"/>
+  <!-- Top right sparkle -->
+  <path d="M370 115 C370 115 376 148 390 156 C376 164 370 197 370 197 C370 197 364 164 350 156 C364 148 370 115 370 115Z" fill="white" opacity="0.9"/>
+  <path d="M337 154 C337 154 367 156 390 156 C367 156 337 158 337 158Z" fill="white" opacity="0.9" stroke="white" stroke-width="4"/>
 
-  <!-- Top left small sparkle -->
-  <path d="M152 130 C152 130 157 150 166 157 C157 164 152 184 152 184 C152 184 147 164 138 157 C147 150 152 130 152 130Z" fill="white" opacity="0.9"/>
-  <path d="M128 155 C128 155 148 157 166 157 C148 157 128 159 128 159 C128 159 148 157 128 155Z" fill="white" opacity="0.9"/>
+  <!-- Top left sparkle -->
+  <path d="M142 115 C142 115 148 140 158 148 C148 156 142 181 142 181 C142 181 136 156 126 148 C136 140 142 115 142 115Z" fill="white" opacity="0.9"/>
+  <path d="M120 146 C120 146 140 148 158 148 C140 148 120 150 120 150Z" fill="white" opacity="0.9" stroke="white" stroke-width="4"/>
 
-  <!-- Bottom right small sparkle -->
-  <path d="M360 312 C360 312 365 332 374 339 C365 346 360 366 360 366 C360 366 355 346 346 339 C355 332 360 312 360 312Z" fill="white" opacity="0.9"/>
-  <path d="M336 337 C336 337 356 339 374 339 C356 339 336 341 336 341 C336 341 356 339 336 337Z" fill="white" opacity="0.9"/>
+  <!-- Bottom right sparkle -->
+  <path d="M370 315 C370 315 376 340 386 348 C376 356 370 381 370 381 C370 381 364 356 354 348 C364 340 370 315 370 315Z" fill="white" opacity="0.9"/>
+  <path d="M346 346 C346 346 366 348 386 348 C366 348 346 350 346 350Z" fill="white" opacity="0.9" stroke="white" stroke-width="4"/>
 
-  <!-- Bottom left small sparkle -->
-  <path d="M152 312 C152 312 157 332 166 339 C157 346 152 366 152 366 C152 366 147 346 138 339 C147 332 152 312 152 312Z" fill="white" opacity="0.9"/>
-  <path d="M128 337 C128 337 148 339 166 339 C148 339 128 341 128 341 C128 341 148 339 128 337Z" fill="white" opacity="0.9"/>
+  <!-- Bottom left sparkle -->
+  <path d="M142 315 C142 315 148 340 158 348 C148 356 142 381 142 381 C142 381 136 356 126 348 C136 340 142 315 142 315Z" fill="white" opacity="0.9"/>
+  <path d="M120 346 C120 346 140 348 158 348 C140 348 120 350 120 350Z" fill="white" opacity="0.9" stroke="white" stroke-width="4"/>
 </svg>
