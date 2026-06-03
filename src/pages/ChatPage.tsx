@@ -51,7 +51,6 @@ function PremiumModal({ onClose, onUnlock }: { onClose: () => void; onUnlock: ()
             You've used your 6 free file attachments. Enter your premium code to unlock unlimited uploads.
           </p>
         </div>
-
         <input
           type="password"
           value={code}
@@ -61,7 +60,6 @@ function PremiumModal({ onClose, onUnlock }: { onClose: () => void; onUnlock: ()
           className="w-full bg-zinc-800 border border-zinc-700/60 rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-all mb-2"
         />
         {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
-
         <button
           onClick={handleSubmit}
           className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-semibold hover:opacity-90 transition-all shadow-md shadow-amber-900/30 mb-2"
@@ -94,6 +92,7 @@ export default function ChatPage() {
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const abortRef = useRef(false);
+  const skipNextLoadRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -166,7 +165,14 @@ export default function ChatPage() {
   };
 
   useEffect(() => {
-    if (!activeConversationId) { setMessages([]); return; }
+    if (!activeConversationId) {
+      setMessages([]);
+      return;
+    }
+    if (skipNextLoadRef.current) {
+      skipNextLoadRef.current = false;
+      return;
+    }
     loadMessages(activeConversationId);
   }, [activeConversationId]);
 
@@ -234,7 +240,6 @@ export default function ChatPage() {
 
     const fileToSend = attachedFile;
 
-    // Check attachment limit
     if (fileToSend && !canAttach()) {
       setShowPremiumModal(true);
       return;
@@ -251,6 +256,7 @@ export default function ChatPage() {
     if (!conversationId) {
       conversationId = await createConversation(trimmed || fileToSend?.name || "File");
       if (!conversationId) return;
+      skipNextLoadRef.current = true;
       setActiveConversationId(conversationId);
     }
 
