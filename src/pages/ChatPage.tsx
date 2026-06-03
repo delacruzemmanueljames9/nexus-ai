@@ -22,6 +22,7 @@ export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const abortRef = useRef(false);
+  const isSendingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -59,6 +60,9 @@ export default function ChatPage() {
     if (!activeConversationId) {
       setMessages([]);
       return;
+    }
+    if (isSendingRef.current) {
+      return; // don't reset here — let finally() handle it
     }
     loadMessages(activeConversationId);
   }, [activeConversationId]);
@@ -150,8 +154,12 @@ export default function ChatPage() {
     const isFirstMessage = messages.length === 0;
 
     if (!conversationId) {
+      isSendingRef.current = true;
       conversationId = await createConversation(trimmed || fileToSend?.name || "File");
-      if (!conversationId) return;
+      if (!conversationId) {
+        isSendingRef.current = false;
+        return;
+      }
       setActiveConversationId(conversationId);
     }
 
@@ -249,6 +257,7 @@ export default function ChatPage() {
       }
     } finally {
       setStreaming(false);
+      isSendingRef.current = false;
     }
   };
 
