@@ -1,12 +1,83 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
-import { streamGroqResponse, generateTitle, extractFileWithResult, fileToBase64, type MessageContent } from "@/lib/groq";
+import { streamGroqResponse, generateTitle, extractTextFromFile, fileToBase64, type MessageContent } from "@/lib/groq";
 import { useAuth } from "@/context/AuthContext";
 import type { Conversation, Message } from "@/types";
 import Sidebar from "@/components/Sidebar";
 import MessageBubble from "@/components/MessageBubble";
-import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X } from "lucide-react";
+import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X, Lock, Crown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+const PREMIUM_PASSWORD = "Lei100";
+const FREE_ATTACHMENT_LIMIT = 6;
+const RESET_HOURS = 5;
+
+function getAttachmentData(userId: string) {
+  try {
+    const raw = localStorage.getItem(`nexus_attach_${userId}`);
+    if (!raw) return { count: 0, resetAt: Date.now() + RESET_HOURS * 60 * 60 * 1000, isPremium: false };
+    return JSON.parse(raw);
+  } catch {
+    return { count: 0, resetAt: Date.now() + RESET_HOURS * 60 * 60 * 1000, isPremium: false };
+  }
+}
+
+function saveAttachmentData(userId: string, data: { count: number; resetAt: number; isPremium: boolean }) {
+  localStorage.setItem(`nexus_attach_${userId}`, JSON.stringify(data));
+}
+
+function PremiumModal({ onClose, onUnlock }: { onClose: () => void; onUnlock: () => void }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+
+  const handleSubmit = () => {
+    if (code === PREMIUM_PASSWORD) {
+      onUnlock();
+    } else {
+      setError("Invalid code. Please try again.");
+      setCode("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+      <div className="bg-zinc-900 border border-zinc-700/60 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <div className="flex flex-col items-center mb-5">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center mb-3 shadow-lg">
+            <Crown className="w-7 h-7 text-white" />
+          </div>
+          <h2 className="text-lg font-bold text-white">Upgrade to Premium</h2>
+          <p className="text-xs text-zinc-400 text-center mt-1">
+            You've used your 6 free file attachments. Enter your premium code to unlock unlimited uploads.
+          </p>
+        </div>
+
+        <input
+          type="password"
+          value={code}
+          onChange={(e) => { setCode(e.target.value); setError(""); }}
+          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+          placeholder="Enter premium code..."
+          className="w-full bg-zinc-800 border border-zinc-700/60 rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-all mb-2"
+        />
+        {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
+
+        <button
+          onClick={handleSubmit}
+          className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-semibold hover:opacity-90 transition-all shadow-md shadow-amber-900/30 mb-2"
+        >
+          Unlock Premium
+        </button>
+        <button
+          onClick={onClose}
+          className="w-full py-2 rounded-xl text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          Maybe later
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function ChatPage() {
   const { user } = useAuth();
@@ -21,8 +92,8 @@ export default function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
   const abortRef = useRef(false);
-  const isSendingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -31,23 +102,61 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+  useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
+  useEffect(() => { if (!user) return; loadConversations(); }, [user]);
 
-  useEffect(() => {
-    if (!user) return;
-    loadConversations();
+  const getAttachInfo = useCallback(() => {
+    if (!user) return { count: 0, resetAt: 0, isPremium: false };
+    const data = getAttachmentData(user.id);
+    if (Date.now() > data.resetAt && !data.isPremium) {
+      const reset = { count: 0, resetAt: Date.now() + RESET_HOURS * 60 * 60 * 1000, isPremium: false };
+      saveAttachmentData(user.id, reset);
+      return reset;
+    }
+    return data;
   }, [user]);
+
+  const canAttach = useCallback(() => {
+    const data = getAttachInfo();
+    return data.isPremium || data.count < FREE_ATTACHMENT_LIMIT;
+  }, [getAttachInfo]);
+
+  const incrementAttachCount = useCallback(() => {
+    if (!user) return;
+    const data = getAttachInfo();
+    if (!data.isPremium) {
+      saveAttachmentData(user.id, { ...data, count: data.count + 1 });
+    }
+  }, [user, getAttachInfo]);
+
+  const handleUnlockPremium = useCallback(() => {
+    if (!user) return;
+    const data = getAttachInfo();
+    saveAttachmentData(user.id, { ...data, isPremium: true });
+    setShowPremiumModal(false);
+    toast({ title: "Premium Unlocked! 🎉", description: "You now have unlimited file uploads!" });
+  }, [user, getAttachInfo, toast]);
+
+  const getRemainingUploads = useCallback(() => {
+    const data = getAttachInfo();
+    if (data.isPremium) return "∞";
+    return Math.max(0, FREE_ATTACHMENT_LIMIT - data.count);
+  }, [getAttachInfo]);
+
+  const getResetTime = useCallback(() => {
+    const data = getAttachInfo();
+    if (data.isPremium) return null;
+    const ms = data.resetAt - Date.now();
+    if (ms <= 0) return null;
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return `${h}h ${m}m`;
+  }, [getAttachInfo]);
 
   const loadConversations = async () => {
     setLoadingConversations(true);
     const { data, error } = await supabase
-      .from("conversations")
-      .select("*")
-      .eq("user_id", user!.id)
-      .order("created_at", { ascending: false });
-
+      .from("conversations").select("*").eq("user_id", user!.id).order("created_at", { ascending: false });
     if (error) {
       toast({ title: "Failed to load conversations", description: error.message, variant: "destructive" });
     } else {
@@ -57,24 +166,14 @@ export default function ChatPage() {
   };
 
   useEffect(() => {
-    if (!activeConversationId) {
-      setMessages([]);
-      return;
-    }
-    if (isSendingRef.current) {
-      return; // don't reset here — let finally() handle it
-    }
+    if (!activeConversationId) { setMessages([]); return; }
     loadMessages(activeConversationId);
   }, [activeConversationId]);
 
   const loadMessages = async (conversationId: string) => {
     setLoadingMessages(true);
     const { data, error } = await supabase
-      .from("messages")
-      .select("*")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true });
-
+      .from("messages").select("*").eq("conversation_id", conversationId).order("created_at", { ascending: true });
     if (error) {
       toast({ title: "Error", description: "Failed to load messages", variant: "destructive" });
     } else {
@@ -86,11 +185,7 @@ export default function ChatPage() {
   const createConversation = async (firstMessage: string): Promise<string | null> => {
     const title = firstMessage.length > 50 ? firstMessage.slice(0, 50) + "…" : firstMessage;
     const { data, error } = await supabase
-      .from("conversations")
-      .insert({ user_id: user!.id, title })
-      .select()
-      .single();
-
+      .from("conversations").insert({ user_id: user!.id, title }).select().single();
     if (error || !data) {
       toast({ title: "Failed to create conversation", description: error?.message ?? "Unknown error", variant: "destructive" });
       return null;
@@ -101,11 +196,7 @@ export default function ChatPage() {
 
   const saveMessage = async (conversationId: string, role: "user" | "assistant", content: string): Promise<Message | null> => {
     const { data, error } = await supabase
-      .from("messages")
-      .insert({ conversation_id: conversationId, role, content })
-      .select()
-      .single();
-
+      .from("messages").insert({ conversation_id: conversationId, role, content }).select().single();
     if (error || !data) return null;
     return data;
   };
@@ -132,10 +223,7 @@ export default function ChatPage() {
     const ext = file.name.split(".").pop();
     const path = `${user!.id}/${conversationId}/${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from("attachments").upload(path, file);
-    if (error) {
-      console.error("Upload error:", error);
-      return null;
-    }
+    if (error) { console.error("Upload error:", error); return null; }
     const { data } = supabase.storage.from("attachments").getPublicUrl(path);
     return data.publicUrl;
   };
@@ -145,6 +233,13 @@ export default function ChatPage() {
     if ((!trimmed && !attachedFile) || streaming) return;
 
     const fileToSend = attachedFile;
+
+    // Check attachment limit
+    if (fileToSend && !canAttach()) {
+      setShowPremiumModal(true);
+      return;
+    }
+
     setInput("");
     setAttachedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -154,19 +249,16 @@ export default function ChatPage() {
     const isFirstMessage = messages.length === 0;
 
     if (!conversationId) {
-      isSendingRef.current = true;
       conversationId = await createConversation(trimmed || fileToSend?.name || "File");
-      if (!conversationId) {
-        isSendingRef.current = false;
-        return;
-      }
+      if (!conversationId) return;
       setActiveConversationId(conversationId);
     }
 
-    let userMessageContent: MessageContent["content"] = trimmed || "";
-    let userMessageText = trimmed || "";
+    let userMessageContent: MessageContent["content"] = trimmed;
+    let userMessageText = trimmed;
 
     if (fileToSend) {
+      incrementAttachCount();
       const isImage = fileToSend.type.startsWith("image/");
 
       if (isImage) {
@@ -174,29 +266,22 @@ export default function ChatPage() {
         const dataUrl = `data:${fileToSend.type};base64,${base64}`;
         const publicUrl = await uploadFileToSupabase(fileToSend, conversationId);
         userMessageContent = [
-          ...(trimmed ? [{ type: "text", text: trimmed }] : [{ type: "text", text: "Please analyze this image." }]),
+          ...(trimmed ? [{ type: "text", text: trimmed }] : []),
           { type: "image_url", image_url: { url: dataUrl } },
         ];
         const imageTag = publicUrl ? `[Image: ${fileToSend.name}|${publicUrl}]` : `[Image: ${fileToSend.name}]`;
         userMessageText = trimmed ? `${trimmed}\n\n${imageTag}` : imageTag;
       } else {
         await uploadFileToSupabase(fileToSend, conversationId);
-        const extraction = await extractFileWithResult(fileToSend);
-
-        if (extraction.isScanned) {
-          toast({
-            title: "Scanned PDF Detected",
-            description: "This PDF is image-based or scanned and cannot be read. Please use a text-based PDF, Word document (.docx), or copy-paste the content instead.",
-            variant: "destructive",
-          });
-          setAttachedFile(fileToSend);
+        try {
+          const extractedText = await extractTextFromFile(fileToSend);
+          const fileContext = `\n\n[File: ${fileToSend.name}]\n${extractedText}`;
+          userMessageContent = (trimmed || "") + fileContext;
+          userMessageText = (trimmed || "") + fileContext;
+        } catch {
+          toast({ title: "File Error", description: `Could not read ${fileToSend.name}.`, variant: "destructive" });
           return;
         }
-
-        const prompt = trimmed || "Please analyze this file and summarize its contents.";
-        const fileContext = `${prompt}\n\n[File: ${fileToSend.name}]\n${extraction.text}`;
-        userMessageContent = fileContext;
-        userMessageText = fileContext;
       }
     }
 
@@ -207,16 +292,17 @@ export default function ChatPage() {
       content: userMessageText,
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, tempUserMsg]);
+
+    const currentMessages = [...messages, tempUserMsg];
+    setMessages(currentMessages);
 
     const savedUserMsg = await saveMessage(conversationId, "user", userMessageText);
     if (savedUserMsg) {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
-    // ✅ FIX: include tempUserMsg so the first message is never dropped
-    const allCurrentMessages = [...messages, tempUserMsg];
-    const history: MessageContent[] = allCurrentMessages.slice(-6).map((m) => ({
+    const recentMessages = currentMessages.slice(-10);
+    const history: MessageContent[] = recentMessages.map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.id === tempUserMsg.id ? userMessageContent : m.content,
     }));
@@ -231,7 +317,6 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, tempAssistantMsg]);
     setStreaming(true);
     abortRef.current = false;
-
     let fullContent = "";
 
     try {
@@ -257,14 +342,10 @@ export default function ChatPage() {
       }
     } finally {
       setStreaming(false);
-      isSendingRef.current = false;
     }
   };
 
-  const handleStop = () => {
-    abortRef.current = true;
-    setStreaming(false);
-  };
+  const handleStop = () => { abortRef.current = true; setStreaming(false); };
 
   const handleRegenerate = async () => {
     if (!activeConversationId || streaming) return;
@@ -276,7 +357,7 @@ export default function ChatPage() {
     const messagesWithoutLast = messages.filter((m) => m.id !== lastAssistant.id);
     setMessages(messagesWithoutLast);
 
-    const history: MessageContent[] = messagesWithoutLast.slice(-6).map((m) => ({
+    const history: MessageContent[] = messagesWithoutLast.slice(-10).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
@@ -330,10 +411,7 @@ export default function ChatPage() {
     await supabase.from("messages").delete().eq("conversation_id", id);
     await supabase.from("conversations").delete().eq("id", id);
     setConversations((prev) => prev.filter((c) => c.id !== id));
-    if (activeConversationId === id) {
-      setActiveConversationId(null);
-      setMessages([]);
-    }
+    if (activeConversationId === id) { setActiveConversationId(null); setMessages([]); }
   };
 
   const handleDeleteAllConversations = async () => {
@@ -347,10 +425,7 @@ export default function ChatPage() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
   const autoResizeTextarea = () => {
@@ -365,8 +440,19 @@ export default function ChatPage() {
     autoResizeTextarea();
   };
 
+  const attachInfo = getAttachInfo();
+  const remaining = getRemainingUploads();
+  const resetTime = getResetTime();
+
   return (
     <div className="flex h-[100dvh] bg-[#0d0d0d] overflow-hidden">
+      {showPremiumModal && (
+        <PremiumModal
+          onClose={() => setShowPremiumModal(false)}
+          onUnlock={handleUnlockPremium}
+        />
+      )}
+
       <Sidebar
         activeConversationId={activeConversationId}
         onSelectConversation={setActiveConversationId}
@@ -388,11 +474,21 @@ export default function ChatPage() {
           >
             <Menu className="w-5 h-5" />
           </button>
-          <span className="text-sm font-medium text-zinc-300 truncate">
+          <span className="text-sm font-medium text-zinc-300 truncate flex-1">
             {activeConversationId
               ? conversations.find((c) => c.id === activeConversationId)?.title ?? "Conversation"
               : "New chat"}
           </span>
+          {attachInfo.isPremium ? (
+            <span className="flex items-center gap-1 text-xs text-amber-400 font-medium">
+              <Crown className="w-3 h-3" /> Premium
+            </span>
+          ) : (
+            <span className="text-xs text-zinc-500">
+              {remaining} uploads left
+              {resetTime && ` · resets in ${resetTime}`}
+            </span>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto py-4">
@@ -427,13 +523,8 @@ export default function ChatPage() {
             {attachedFile && (
               <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-zinc-800/60 rounded-xl border border-zinc-700/50">
                 <span className="text-xs text-zinc-400 truncate flex-1">{attachedFile.name}</span>
-                <button
-                  onClick={() => {
-                    setAttachedFile(null);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                  }}
-                  className="text-zinc-500 hover:text-zinc-200 transition-colors"
-                >
+                <button onClick={() => { setAttachedFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                  className="text-zinc-500 hover:text-zinc-200 transition-colors">
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -441,11 +532,18 @@ export default function ChatPage() {
 
             <div className="relative flex items-end gap-2 bg-zinc-900 border border-zinc-700/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/60 focus-within:ring-1 focus-within:ring-violet-500/20 transition-all">
               <button
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  if (!canAttach()) { setShowPremiumModal(true); return; }
+                  fileInputRef.current?.click();
+                }}
                 disabled={streaming}
-                className="flex-shrink-0 w-8 h-8 rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/60 flex items-center justify-center transition-all disabled:opacity-30"
+                className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all disabled:opacity-30 ${
+                  canAttach()
+                    ? "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/60"
+                    : "text-amber-500 hover:text-amber-400 hover:bg-zinc-700/60"
+                }`}
               >
-                <Paperclip className="w-4 h-4" />
+                {canAttach() ? <Paperclip className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
               </button>
               <input
                 ref={fileInputRef}
@@ -479,20 +577,14 @@ export default function ChatPage() {
               />
 
               {streaming ? (
-                <button
-                  data-testid="button-stop"
-                  onClick={handleStop}
-                  className="flex-shrink-0 w-8 h-8 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 flex items-center justify-center transition-all"
-                >
+                <button data-testid="button-stop" onClick={handleStop}
+                  className="flex-shrink-0 w-8 h-8 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 flex items-center justify-center transition-all">
                   <StopCircle className="w-4 h-4" />
                 </button>
               ) : (
-                <button
-                  data-testid="button-send"
-                  onClick={handleSend}
+                <button data-testid="button-send" onClick={handleSend}
                   disabled={!input.trim() && !attachedFile}
-                  className="flex-shrink-0 w-8 h-8 rounded-xl bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-md shadow-violet-900/30"
-                >
+                  className="flex-shrink-0 w-8 h-8 rounded-xl bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-md shadow-violet-900/30">
                   <Send className="w-4 h-4" />
                 </button>
               )}
@@ -514,20 +606,15 @@ function WelcomeScreen() {
     "What are the best practices for REST APIs?",
     "Help me brainstorm startup ideas",
   ];
-
   return (
     <div className="flex flex-col items-center justify-center h-full px-4 text-center">
       <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center mb-5 shadow-xl shadow-violet-900/40">
         <Sparkles className="w-8 h-8 text-white" />
       </div>
       <h2 className="text-2xl font-bold text-white mb-2">How can I help you?</h2>
-      <p className="text-sm text-zinc-500 mb-8 max-w-xs">
-        I'm Nexus AI, a limitless powerful assistant. Ask me anything.
-      </p>
+      <p className="text-sm text-zinc-500 mb-8 max-w-xs">I'm Nexus AI, a limitless powerful assistant. Ask me anything.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
-        {suggestions.map((s) => (
-          <SuggestionCard key={s} text={s} />
-        ))}
+        {suggestions.map((s) => (<SuggestionCard key={s} text={s} />))}
       </div>
     </div>
   );
