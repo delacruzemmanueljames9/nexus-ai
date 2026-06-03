@@ -1,6 +1,6 @@
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
 const GROQ_MODEL = "llama-3.3-70b-versatile";
-const GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview";
+const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 const SYSTEM_PROMPT =
   "You are Nexus AI, created by Emmanuel James Delacruz, a Filipino software developer and student. You are a limitless powerful AI assistant. When asked about your creator, mention that Emmanuel James Delacruz built Nexus AI using React, TypeScript, Groq AI, and Supabase.";
 
@@ -21,7 +21,6 @@ export async function streamGroqResponse(
   const hasVision = messages.some(
     (m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url")
   );
-
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -52,17 +51,13 @@ export async function streamGroqResponse(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-
     buffer += decoder.decode(value, { stream: true });
-
     let newlineIndex: number;
     while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, newlineIndex).trim();
       buffer = buffer.slice(newlineIndex + 1);
-
       if (!line || line === "data: [DONE]") continue;
       if (!line.startsWith("data: ")) continue;
-
       try {
         const json = JSON.parse(line.slice(6));
         const content = json.choices?.[0]?.delta?.content;
@@ -145,7 +140,6 @@ export function isTextFile(file: File): boolean {
     ".php", ".rb", ".swift", ".kt", ".yaml", ".yml",
     ".toml", ".ini", ".env", ".sh", ".bash",
   ];
-
   if (textTypes.includes(file.type)) return true;
   const fileName = file.name.toLowerCase();
   return textExtensions.some((ext) => fileName.endsWith(ext));
@@ -156,7 +150,7 @@ export async function extractTextFromFile(file: File): Promise<string> {
   if (isTextFile(file)) {
     try {
       const text = await file.text();
-      return text || "[Empty file]";
+      return text.slice(0, 50000) || "[Empty file]";
     } catch {
       return "[Could not read file]";
     }
@@ -170,20 +164,17 @@ export async function extractTextFromFile(file: File): Promise<string> {
         try {
           const pdfjsLib = await import("pdfjs-dist");
           pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-
           const arrayBuffer = reader.result as ArrayBuffer;
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
           let fullText = "";
-
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
             const pageText = textContent.items
               .map((item: any) => ("str" in item ? item.str : ""))
               .join(" ");
-            fullText += pageText + "\n";
+            fullText += `Page ${i}:\n${pageText}\n\n`;
           }
-
           resolve(fullText.trim().slice(0, 50000) || "[Could not extract PDF text]");
         } catch {
           resolve("[Could not extract PDF text — try copy-pasting the content]");
@@ -194,30 +185,67 @@ export async function extractTextFromFile(file: File): Promise<string> {
     });
   }
 
-  // Word documents (.docx)
+  // Word documents (.docx) — using mammoth
   if (
     file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     file.name.toLowerCase().endsWith(".docx")
   ) {
     return new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         try {
-          const binary = reader.result as string;
-          const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
-          const texts: string[] = [];
-          let match;
-          while ((match = textRegex.exec(binary)) !== null) {
-            if (match[1].trim()) texts.push(match[1]);
-          }
-          const result = texts.join(" ").slice(0, 50000);
-          resolve(result || "[Could not extract Word document text]");
+          const mammoth = await import("mammoth");
+          const arrayBuffer = reader.result as ArrayBuffer;
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          resolve(result.value.slice(0, 50000) || "[Could not extract Word document text]");
         } catch {
-          resolve("[Could not extract Word document text]");
+          // fallback: regex method
+          try {
+            const binary = reader.result as string;
+            const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+            const texts: string[] = [];
+            let match;
+            while ((match = textRegex.exec(binary)) !== null) {
+              if (match[1].trim()) texts.push(match[1]);
+            }
+            const result = texts.join(" ").slice(0, 50000);
+            resolve(result || "[Could not extract Word document text]");
+          } catch {
+            resolve("[Could not extract Word document text]");
+          }
         }
       };
       reader.onerror = () => resolve("[Could not read Word document]");
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // Excel (.xlsx) — using SheetJS
+  if (
+    file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    file.name.toLowerCase().endsWith(".xlsx") ||
+    file.name.toLowerCase().endsWith(".xls")
+  ) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const XLSX = await import("xlsx");
+          const arrayBuffer = reader.result as ArrayBuffer;
+          const workbook = XLSX.read(arrayBuffer, { type: "array" });
+          let fullText = "";
+          workbook.SheetNames.forEach((sheetName) => {
+            const sheet = workbook.Sheets[sheetName];
+            const csv = XLSX.utils.sheet_to_csv(sheet);
+            fullText += `Sheet: ${sheetName}\n${csv}\n\n`;
+          });
+          resolve(fullText.slice(0, 50000) || "[Could not extract spreadsheet text]");
+        } catch {
+          resolve("[Could not extract spreadsheet text]");
+        }
+      };
+      reader.onerror = () => resolve("[Could not read spreadsheet]");
+      reader.readAsArrayBuffer(file);
     });
   }
 
