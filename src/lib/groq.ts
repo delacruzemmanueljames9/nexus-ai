@@ -55,7 +55,6 @@ export async function streamGroqResponse(
 
     buffer += decoder.decode(value, { stream: true });
 
-    // Process complete lines only
     let newlineIndex: number;
     while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, newlineIndex).trim();
@@ -76,7 +75,6 @@ export async function streamGroqResponse(
     }
   }
 
-  // Process any remaining buffer
   if (buffer.trim() && buffer.trim() !== "data: [DONE]" && buffer.trim().startsWith("data: ")) {
     try {
       const json = JSON.parse(buffer.trim().slice(6));
@@ -124,34 +122,123 @@ export async function generateTitle(
   return (json.choices?.[0]?.message?.content ?? "").trim().slice(0, 60);
 }
 
+// Detect if file is an image
+export function isImageFile(file: File): boolean {
+  return file.type.startsWith("image/");
+}
+
+// Detect if file is a text-based file
+export function isTextFile(file: File): boolean {
+  const textTypes = [
+    "text/plain",
+    "text/csv",
+    "text/html",
+    "text/css",
+    "text/javascript",
+    "application/json",
+    "application/xml",
+    "text/xml",
+    "text/markdown",
+  ];
+  const textExtensions = [
+    ".txt", ".csv", ".md", ".json", ".xml", ".html",
+    ".css", ".js", ".ts", ".tsx", ".jsx", ".py",
+    ".java", ".c", ".cpp", ".cs", ".go", ".rs",
+    ".php", ".rb", ".swift", ".kt", ".yaml", ".yml",
+    ".toml", ".ini", ".env", ".sh", ".bash",
+  ];
+
+  if (textTypes.includes(file.type)) return true;
+
+  const fileName = file.name.toLowerCase();
+  return textExtensions.some((ext) => fileName.endsWith(ext));
+}
+
+// Extract text from any file
 export async function extractTextFromFile(file: File): Promise<string> {
-  if (file.type === "text/plain" || file.type === "text/csv") {
-    return await file.text();
+  // Text-based files — read directly
+  if (isTextFile(file)) {
+    try {
+      const text = await file.text();
+      return text || "[Empty file]";
+    } catch {
+      return "[Could not read file]";
+    }
   }
 
-  if (file.type === "application/pdf") {
+  // PDF — extract readable text
+  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = () => {
         try {
-          const text = reader.result as string;
-          const extracted = text
-            .replace(/[^\x20-\x7E\n]/g, " ")
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 8000);
-          resolve(extracted || "[Could not extract PDF text]");
+          const binary = reader.result as string;
+
+          // Extract text between stream markers
+          const streamRegex = /stream([\s\S]*?)endstream/g;
+          let extractedChunks: string[] = [];
+          let match;
+
+          while ((match = streamRegex.exec(binary)) !== null) {
+            const chunk = match[1]
+              .replace(/[^\x20-\x7E\n\r\t]/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+            if (chunk.length > 20) extractedChunks.push(chunk);
+          }
+
+          // Fallback: extract all readable ASCII text
+          if (extractedChunks.length === 0) {
+            const fallback = binary
+              .replace(/[^\x20-\x7E\n\r\t]/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+            extractedChunks = [fallback];
+          }
+
+          const result = extractedChunks.join("\n").slice(0, 50000);
+          resolve(result || "[Could not extract PDF text — try copy-pasting the content]");
         } catch {
           resolve("[Could not extract PDF text]");
         }
       };
-      reader.readAsText(file);
+      reader.onerror = () => resolve("[Could not read PDF file]");
+      reader.readAsBinaryString(file);
     });
   }
 
-  return "[Unsupported file type]";
+  // Word documents (.docx) — extract readable text
+  if (
+    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    file.name.toLowerCase().endsWith(".docx")
+  ) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const binary = reader.result as string;
+          // Extract text content from XML inside docx
+          const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+          const texts: string[] = [];
+          let match;
+          while ((match = textRegex.exec(binary)) !== null) {
+            if (match[1].trim()) texts.push(match[1]);
+          }
+          const result = texts.join(" ").slice(0, 50000);
+          resolve(result || "[Could not extract Word document text]");
+        } catch {
+          resolve("[Could not extract Word document text]");
+        }
+      };
+      reader.onerror = () => resolve("[Could not read Word document]");
+      reader.readAsBinaryString(file);
+    });
+  }
+
+  return `[File: ${file.name} — ${(file.size / 1024).toFixed(1)}KB — preview not available for this file type]`;
 }
 
+// Convert image to base64 for Groq vision
 export async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
