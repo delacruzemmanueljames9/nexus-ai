@@ -1,8 +1,8 @@
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
 const GROQ_MODEL = "llama-3.3-70b-versatile";
-const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview";
 const SYSTEM_PROMPT =
-  "You are Nexus AI, created by Emmanuel James Delacruz, a Filipino software developer and student. You are a limitless powerful AI assistant. When asked about your creator, mention that Emmanuel James Delacruz built Nexus AI using React, TypeScript, Groq AI, and Supabase.";
+  "You are Nexus AI, created by Emmanuel James Delacruz, a Filipino software developer and student. You are a limitless powerful AI assistant. When asked about your creator, mention that Emmanuel James Delacruz built Nexus AI using React, TypeScript, Groq AI, and Supabase. You can read and analyze files, images, PDFs, Word documents, spreadsheets, and code files that users send you.";
 
 export interface StreamChunk {
   content: string;
@@ -21,6 +21,7 @@ export async function streamGroqResponse(
   const hasVision = messages.some(
     (m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url")
   );
+
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -51,13 +52,17 @@ export async function streamGroqResponse(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+
     buffer += decoder.decode(value, { stream: true });
+
     let newlineIndex: number;
     while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, newlineIndex).trim();
       buffer = buffer.slice(newlineIndex + 1);
+
       if (!line || line === "data: [DONE]") continue;
       if (!line.startsWith("data: ")) continue;
+
       try {
         const json = JSON.parse(line.slice(6));
         const content = json.choices?.[0]?.delta?.content;
@@ -123,22 +128,16 @@ export function isImageFile(file: File): boolean {
 
 export function isTextFile(file: File): boolean {
   const textTypes = [
-    "text/plain",
-    "text/csv",
-    "text/html",
-    "text/css",
-    "text/javascript",
-    "application/json",
-    "application/xml",
-    "text/xml",
-    "text/markdown",
+    "text/plain", "text/csv", "text/html", "text/css",
+    "text/javascript", "application/json", "application/xml",
+    "text/xml", "text/markdown",
   ];
   const textExtensions = [
     ".txt", ".csv", ".md", ".json", ".xml", ".html",
     ".css", ".js", ".ts", ".tsx", ".jsx", ".py",
     ".java", ".c", ".cpp", ".cs", ".go", ".rs",
     ".php", ".rb", ".swift", ".kt", ".yaml", ".yml",
-    ".toml", ".ini", ".env", ".sh", ".bash",
+    ".toml", ".ini", ".env", ".sh", ".bash", ".sql",
   ];
   if (textTypes.includes(file.type)) return true;
   const fileName = file.name.toLowerCase();
@@ -146,6 +145,11 @@ export function isTextFile(file: File): boolean {
 }
 
 export async function extractTextFromFile(file: File): Promise<string> {
+  // Images — handled separately via vision
+  if (isImageFile(file)) {
+    return `[Image: ${file.name}]`;
+  }
+
   // Text-based files
   if (isTextFile(file)) {
     try {
@@ -164,20 +168,25 @@ export async function extractTextFromFile(file: File): Promise<string> {
         try {
           const pdfjsLib = await import("pdfjs-dist");
           pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
           const arrayBuffer = reader.result as ArrayBuffer;
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
           let fullText = "";
+
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
             const pageText = textContent.items
               .map((item: any) => ("str" in item ? item.str : ""))
               .join(" ");
-            fullText += `Page ${i}:\n${pageText}\n\n`;
+            fullText += `[Page ${i}]\n${pageText}\n\n`;
           }
-          resolve(fullText.trim().slice(0, 50000) || "[Could not extract PDF text]");
-        } catch {
-          resolve("[Could not extract PDF text — try copy-pasting the content]");
+
+          const result = fullText.trim().slice(0, 50000);
+          resolve(result || "[Could not extract text from PDF — the PDF may be image-based or scanned]");
+        } catch (err) {
+          console.error("PDF extraction error:", err);
+          resolve("[Could not extract PDF text — the PDF may be image-based or scanned]");
         }
       };
       reader.onerror = () => resolve("[Could not read PDF file]");
@@ -199,20 +208,7 @@ export async function extractTextFromFile(file: File): Promise<string> {
           const result = await mammoth.extractRawText({ arrayBuffer });
           resolve(result.value.slice(0, 50000) || "[Could not extract Word document text]");
         } catch {
-          // fallback: regex method
-          try {
-            const binary = reader.result as string;
-            const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
-            const texts: string[] = [];
-            let match;
-            while ((match = textRegex.exec(binary)) !== null) {
-              if (match[1].trim()) texts.push(match[1]);
-            }
-            const result = texts.join(" ").slice(0, 50000);
-            resolve(result || "[Could not extract Word document text]");
-          } catch {
-            resolve("[Could not extract Word document text]");
-          }
+          resolve("[Could not extract Word document text]");
         }
       };
       reader.onerror = () => resolve("[Could not read Word document]");
@@ -220,9 +216,10 @@ export async function extractTextFromFile(file: File): Promise<string> {
     });
   }
 
-  // Excel (.xlsx) — using SheetJS
+  // Excel (.xlsx) — using xlsx
   if (
     file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    file.type === "application/vnd.ms-excel" ||
     file.name.toLowerCase().endsWith(".xlsx") ||
     file.name.toLowerCase().endsWith(".xls")
   ) {
@@ -234,14 +231,16 @@ export async function extractTextFromFile(file: File): Promise<string> {
           const arrayBuffer = reader.result as ArrayBuffer;
           const workbook = XLSX.read(arrayBuffer, { type: "array" });
           let fullText = "";
-          workbook.SheetNames.forEach((sheetName) => {
+
+          for (const sheetName of workbook.SheetNames) {
             const sheet = workbook.Sheets[sheetName];
             const csv = XLSX.utils.sheet_to_csv(sheet);
-            fullText += `Sheet: ${sheetName}\n${csv}\n\n`;
-          });
-          resolve(fullText.slice(0, 50000) || "[Could not extract spreadsheet text]");
+            fullText += `[Sheet: ${sheetName}]\n${csv}\n\n`;
+          }
+
+          resolve(fullText.slice(0, 50000) || "[Could not extract spreadsheet data]");
         } catch {
-          resolve("[Could not extract spreadsheet text]");
+          resolve("[Could not extract spreadsheet data]");
         }
       };
       reader.onerror = () => resolve("[Could not read spreadsheet]");
