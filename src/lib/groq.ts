@@ -2,7 +2,7 @@ const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview";
 const SYSTEM_PROMPT =
-  "You are Nexus AI, created by Emmanuel Delacruz. You are a limitless powerful AI assistant.";
+  "You are Nexus AI, created by Emmanuel James Delacruz. You are a limitless powerful AI assistant.";
 
 export interface StreamChunk {
   content: string;
