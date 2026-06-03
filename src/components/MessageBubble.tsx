@@ -21,45 +21,37 @@ function CopyButton({ text }: { text: string }) {
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <button
-      onClick={handleCopy}
-      className="flex items-center gap-1 px-2 py-1 rounded text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 transition-all"
-    >
-      {copied ? (
-        <><Check className="w-3 h-3 text-green-400" /><span className="text-green-400">Copied</span></>
-      ) : (
-        <><Copy className="w-3 h-3" /><span>Copy</span></>
-      )}
+    <button onClick={handleCopy} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 transition-all">
+      {copied ? <><Check className="w-3 h-3 text-green-400" /><span className="text-green-400">Copied</span></> : <><Copy className="w-3 h-3" /><span>Copy</span></>}
     </button>
   );
 }
 
 function parseMessageContent(content: string) {
-  const imageMatch = content.match(/\[Image: (.+?)\]/);
+  const imageMatchWithUrl = content.match(/\[Image: (.+?)\|(.+?)\]/);
+  const imageMatchNoUrl = content.match(/\[Image: (.+?)\]/);
   const fileMatch = content.match(/\[File: (.+?)\]\n([\s\S]*)/);
-  const dataUrlMatch = content.match(/data:(image\/[^;]+);base64,([^"'\s]+)/);
 
   let textPart = content;
   let imageName: string | null = null;
-  let dataUrl: string | null = null;
+  let imageUrl: string | null = null;
   let fileName: string | null = null;
-  let fileContent: string | null = null;
 
-  if (dataUrlMatch) {
-    dataUrl = `data:${dataUrlMatch[1]};base64,${dataUrlMatch[2]}`;
-    textPart = content.replace(dataUrlMatch[0], "").trim();
-  } else if (imageMatch) {
-    imageName = imageMatch[1];
-    textPart = content.replace(`[Image: ${imageName}]`, "").trim();
+  if (imageMatchWithUrl) {
+    imageName = imageMatchWithUrl[1];
+    imageUrl = imageMatchWithUrl[2];
+    textPart = content.replace(imageMatchWithUrl[0], "").trim();
+  } else if (imageMatchNoUrl) {
+    imageName = imageMatchNoUrl[1];
+    textPart = content.replace(imageMatchNoUrl[0], "").trim();
   }
 
   if (fileMatch) {
     fileName = fileMatch[1];
-    fileContent = fileMatch[2];
-    textPart = content.replace(`[File: ${fileName}]\n${fileContent}`, "").trim();
+    textPart = textPart.replace(`[File: ${fileName}]\n${fileMatch[2]}`, "").trim();
   }
 
-  return { textPart, imageName, dataUrl, fileName, fileContent };
+  return { textPart, imageName, imageUrl, fileName };
 }
 
 const markdownComponents: Components = {
@@ -75,23 +67,15 @@ const markdownComponents: Components = {
             <span className="text-xs font-mono text-zinc-500">{language}</span>
             <CopyButton text={codeString} />
           </div>
-          <SyntaxHighlighter
-            style={oneDark}
-            language={language}
-            PreTag="div"
+          <SyntaxHighlighter style={oneDark} language={language} PreTag="div"
             customStyle={{ margin: 0, borderRadius: 0, background: "#0f0f0f", fontSize: "0.8125rem", lineHeight: "1.6", padding: "1rem" }}
-            codeTagProps={{ style: { fontFamily: "JetBrains Mono, Menlo, monospace" } }}
-          >
+            codeTagProps={{ style: { fontFamily: "JetBrains Mono, Menlo, monospace" } }}>
             {codeString}
           </SyntaxHighlighter>
         </div>
       );
     }
-    return (
-      <code className="px-1.5 py-0.5 rounded-md bg-zinc-700/60 text-violet-300 text-[0.8125rem] font-mono" {...props}>
-        {children}
-      </code>
-    );
+    return <code className="px-1.5 py-0.5 rounded-md bg-zinc-700/60 text-violet-300 text-[0.8125rem] font-mono" {...props}>{children}</code>;
   },
   p({ children }) { return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>; },
   ul({ children }) { return <ul className="mb-3 last:mb-0 pl-5 space-y-1 list-disc marker:text-zinc-500">{children}</ul>; },
@@ -102,16 +86,10 @@ const markdownComponents: Components = {
   h3({ children }) { return <h3 className="text-base font-semibold text-zinc-100 mb-2 mt-3 first:mt-0">{children}</h3>; },
   strong({ children }) { return <strong className="font-semibold text-white">{children}</strong>; },
   em({ children }) { return <em className="italic text-zinc-300">{children}</em>; },
-  blockquote({ children }) {
-    return <blockquote className="my-3 pl-4 border-l-2 border-violet-500/60 text-zinc-400 italic">{children}</blockquote>;
-  },
-  a({ href, children }) {
-    return <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-300 underline underline-offset-2 transition-colors">{children}</a>;
-  },
+  blockquote({ children }) { return <blockquote className="my-3 pl-4 border-l-2 border-violet-500/60 text-zinc-400 italic">{children}</blockquote>; },
+  a({ href, children }) { return <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-300 underline underline-offset-2 transition-colors">{children}</a>; },
   hr() { return <hr className="my-4 border-zinc-700/60" />; },
-  table({ children }) {
-    return <div className="my-3 overflow-x-auto rounded-xl border border-zinc-700/50"><table className="w-full text-sm">{children}</table></div>;
-  },
+  table({ children }) { return <div className="my-3 overflow-x-auto rounded-xl border border-zinc-700/50"><table className="w-full text-sm">{children}</table></div>; },
   thead({ children }) { return <thead className="bg-zinc-800/60">{children}</thead>; },
   th({ children }) { return <th className="px-4 py-2.5 text-left font-semibold text-zinc-200 border-b border-zinc-700/50">{children}</th>; },
   td({ children }) { return <td className="px-4 py-2.5 text-zinc-300 border-b border-zinc-700/30 last:border-0">{children}</td>; },
@@ -120,13 +98,10 @@ const markdownComponents: Components = {
 export default function MessageBubble({ message, isLast, onRegenerate, isStreaming }: MessageBubbleProps) {
   const isAssistant = message.role === "assistant";
   const showRegenerate = isAssistant && isLast && onRegenerate && !isStreaming;
-  const { textPart, imageName, dataUrl, fileName } = parseMessageContent(message.content);
+  const { textPart, imageName, imageUrl, fileName } = parseMessageContent(message.content);
 
   return (
-    <div
-      data-testid={`message-${message.id}`}
-      className={`flex flex-col ${isAssistant ? "items-start" : "items-end"} px-4 py-2 gap-1`}
-    >
+    <div data-testid={`message-${message.id}`} className={`flex flex-col ${isAssistant ? "items-start" : "items-end"} px-4 py-2 gap-1`}>
       <div className={`flex gap-3 w-full ${isAssistant ? "justify-start" : "justify-end"}`}>
         {isAssistant && (
           <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-violet-900/30">
@@ -134,24 +109,23 @@ export default function MessageBubble({ message, isLast, onRegenerate, isStreami
           </div>
         )}
 
-        <div
-          className={`max-w-[85%] md:max-w-[75%] rounded-2xl px-4 py-3 text-sm ${
-            isAssistant
-              ? "bg-zinc-800/60 text-zinc-100 rounded-tl-sm"
-              : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white rounded-tr-sm shadow-lg shadow-violet-900/30 break-words leading-relaxed"
-          }`}
-        >
-          {/* Image preview */}
-          {dataUrl && (
+        <div className={`max-w-[85%] md:max-w-[75%] rounded-2xl px-4 py-3 text-sm ${
+          isAssistant
+            ? "bg-zinc-800/60 text-zinc-100 rounded-tl-sm"
+            : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white rounded-tr-sm shadow-lg shadow-violet-900/30 break-words leading-relaxed"
+        }`}>
+
+          {/* Image with URL — show actual image */}
+          {imageUrl && (
             <img
-              src={dataUrl}
-              alt="uploaded"
+              src={imageUrl}
+              alt={imageName ?? "uploaded image"}
               className="mb-2 rounded-xl max-w-full max-h-64 object-contain border border-white/10"
             />
           )}
 
-          {/* Image filename badge */}
-          {imageName && !dataUrl && (
+          {/* Image without URL — show badge */}
+          {!imageUrl && imageName && (
             <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-white/10 rounded-xl border border-white/20">
               <Image className="w-4 h-4 flex-shrink-0" />
               <span className="text-xs truncate">{imageName}</span>
@@ -166,23 +140,20 @@ export default function MessageBubble({ message, isLast, onRegenerate, isStreami
             </div>
           )}
 
-          {/* Message text */}
-          {textPart && (
+          {/* Text content */}
+          {textPart ? (
             isAssistant ? (
               <ReactMarkdown components={markdownComponents}>{textPart}</ReactMarkdown>
             ) : (
               <span className="whitespace-pre-wrap">{textPart}</span>
             )
-          )}
-
-          {/* Fallback if no textPart and no file/image — show raw */}
-          {!textPart && !dataUrl && !imageName && !fileName && (
+          ) : (!imageUrl && !imageName && !fileName) ? (
             isAssistant ? (
               <ReactMarkdown components={markdownComponents}>{message.content}</ReactMarkdown>
             ) : (
               <span className="whitespace-pre-wrap">{message.content}</span>
             )
-          )}
+          ) : null}
         </div>
 
         {!isAssistant && (
@@ -194,11 +165,8 @@ export default function MessageBubble({ message, isLast, onRegenerate, isStreami
 
       {showRegenerate && (
         <div className="pl-11">
-          <button
-            data-testid="button-regenerate"
-            onClick={onRegenerate}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60 transition-all group"
-          >
+          <button data-testid="button-regenerate" onClick={onRegenerate}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60 transition-all group">
             <RefreshCw className="w-3 h-3 group-hover:rotate-180 transition-transform duration-300" />
             Regenerate
           </button>
