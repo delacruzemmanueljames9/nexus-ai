@@ -155,8 +155,9 @@ export default function ChatPage() {
       setActiveConversationId(conversationId);
     }
 
-    let userMessageContent: MessageContent["content"] = trimmed;
-    let userMessageText = trimmed;
+    // Build user message content for Groq
+    let userMessageContent: MessageContent["content"] = trimmed || "";
+    let userMessageText = trimmed || "";
 
     if (fileToSend) {
       const isImage = fileToSend.type.startsWith("image/");
@@ -166,16 +167,13 @@ export default function ChatPage() {
         const dataUrl = `data:${fileToSend.type};base64,${base64}`;
         const publicUrl = await uploadFileToSupabase(fileToSend, conversationId);
         userMessageContent = [
-          ...(trimmed ? [{ type: "text", text: trimmed }] : []),
+          ...(trimmed ? [{ type: "text", text: trimmed }] : [{ type: "text", text: "Please analyze this image." }]),
           { type: "image_url", image_url: { url: dataUrl } },
         ];
-        const imageTag = publicUrl
-          ? `[Image: ${fileToSend.name}|${publicUrl}]`
-          : `[Image: ${fileToSend.name}]`;
+        const imageTag = publicUrl ? `[Image: ${fileToSend.name}|${publicUrl}]` : `[Image: ${fileToSend.name}]`;
         userMessageText = trimmed ? `${trimmed}\n\n${imageTag}` : imageTag;
       } else {
         await uploadFileToSupabase(fileToSend, conversationId);
-
         const extraction = await extractFileWithResult(fileToSend);
 
         if (extraction.isScanned) {
@@ -184,17 +182,18 @@ export default function ChatPage() {
             description: "This PDF is image-based or scanned and cannot be read. Please use a text-based PDF, Word document (.docx), or copy-paste the content instead.",
             variant: "destructive",
           });
-          // Restore input state
           setAttachedFile(fileToSend);
           return;
         }
 
-        const fileContext = `\n\n[File: ${fileToSend.name}]\n${extraction.text}`;
-        userMessageContent = (trimmed || "") + fileContext;
-        userMessageText = (trimmed || "") + fileContext;
+        const prompt = trimmed || "Please analyze this file and summarize its contents.";
+        const fileContext = `${prompt}\n\n[File: ${fileToSend.name}]\n${extraction.text}`;
+        userMessageContent = fileContext;
+        userMessageText = fileContext;
       }
     }
 
+    // Show user message in UI immediately
     const tempUserMsg: Message = {
       id: `temp-user-${Date.now()}`,
       conversation_id: conversationId,
@@ -202,21 +201,25 @@ export default function ChatPage() {
       content: userMessageText,
       created_at: new Date().toISOString(),
     };
+    setMessages((prev) => [...prev, tempUserMsg]);
 
-    const currentMessages = [...messages, tempUserMsg];
-    setMessages(currentMessages);
-
+    // Save to Supabase
     const savedUserMsg = await saveMessage(conversationId, "user", userMessageText);
     if (savedUserMsg) {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
-    const recentMessages = currentMessages.slice(-6);
-    const history: MessageContent[] = recentMessages.map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.id === tempUserMsg.id ? userMessageContent : m.content,
-    }));
+    // Build history for Groq — use previous messages + new user message
+    const previousMessages = messages.slice(-5);
+    const history: MessageContent[] = [
+      ...previousMessages.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+      { role: "user" as const, content: userMessageContent },
+    ];
 
+    // Stream assistant response
     const tempAssistantMsg: Message = {
       id: `temp-assistant-${Date.now()}`,
       conversation_id: conversationId,
