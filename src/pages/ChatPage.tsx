@@ -161,24 +161,28 @@ export default function ChatPage() {
 
     if (fileToSend) {
       const isImage = fileToSend.type.startsWith("image/");
-      await uploadFileToSupabase(fileToSend, conversationId);
 
       if (isImage) {
         const base64 = await fileToBase64(fileToSend);
         const dataUrl = `data:${fileToSend.type};base64,${base64}`;
+        const publicUrl = await uploadFileToSupabase(fileToSend, conversationId);
         userMessageContent = [
           ...(trimmed ? [{ type: "text", text: trimmed }] : []),
           { type: "image_url", image_url: { url: dataUrl } },
         ];
-        userMessageText = trimmed ? `${trimmed}\n\n[Image: ${fileToSend.name}]` : `[Image: ${fileToSend.name}]`;
+        const imageTag = publicUrl
+          ? `[Image: ${fileToSend.name}|${publicUrl}]`
+          : `[Image: ${fileToSend.name}]`;
+        userMessageText = trimmed ? `${trimmed}\n\n${imageTag}` : imageTag;
       } else {
+        await uploadFileToSupabase(fileToSend, conversationId);
         try {
           const extractedText = await extractTextFromFile(fileToSend);
           const fileContext = `\n\n[File: ${fileToSend.name}]\n${extractedText}`;
           userMessageContent = (trimmed || "") + fileContext;
           userMessageText = (trimmed || "") + fileContext;
         } catch {
-          toast({ title: "File Error", description: `Could not read ${fileToSend.name}. Try a different format.`, variant: "destructive" });
+          toast({ title: "File Error", description: `Could not read ${fileToSend.name}.`, variant: "destructive" });
           return;
         }
       }
