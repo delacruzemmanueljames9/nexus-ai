@@ -1,14 +1,19 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
+import { useTheme } from "@/context/ThemeContext";
 import type { Conversation } from "@/types";
-import { Plus, Trash2, MessageSquare, LogOut, Sparkles, X, Menu } from "lucide-react";
+import {
+  Plus, Trash2, MessageSquare, LogOut, Sparkles, X,
+  Settings, Sun, Moon, Monitor, UserRound, RefreshCw
+} from "lucide-react";
 
 interface SidebarProps {
   activeConversationId: string | null;
   onSelectConversation: (id: string) => void;
   onNewChat: () => void;
   onDeleteConversation: (id: string) => void;
+  onDeleteAllConversations: () => void;
   conversations: Conversation[];
   loadingConversations: boolean;
   mobileOpen: boolean;
@@ -20,13 +25,17 @@ export default function Sidebar({
   onSelectConversation,
   onNewChat,
   onDeleteConversation,
+  onDeleteAllConversations,
   conversations,
   loadingConversations,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, switchAccount } = useAuth();
+  const { theme, setTheme } = useTheme();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -35,16 +44,23 @@ export default function Sidebar({
     setDeletingId(null);
   };
 
+  const handleDeleteAll = async () => {
+    if (!confirmDeleteAll) {
+      setConfirmDeleteAll(true);
+      return;
+    }
+    onDeleteAllConversations();
+    setConfirmDeleteAll(false);
+    setShowSettings(false);
+  };
+
   const groupedConversations = groupByDate(conversations);
 
   return (
     <>
       {/* Mobile overlay */}
       {mobileOpen && (
-        <div
-          className="fixed inset-0 bg-black/60 z-20 lg:hidden"
-          onClick={onCloseMobile}
-        />
+        <div className="fixed inset-0 bg-black/60 z-20 lg:hidden" onClick={onCloseMobile} />
       )}
 
       {/* Sidebar */}
@@ -61,10 +77,7 @@ export default function Sidebar({
             </div>
             <span className="font-semibold text-white text-sm">Nexus AI</span>
           </div>
-          <button
-            className="lg:hidden text-zinc-500 hover:text-white transition-colors"
-            onClick={onCloseMobile}
-          >
+          <button className="lg:hidden text-zinc-500 hover:text-white transition-colors" onClick={onCloseMobile}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -130,7 +143,7 @@ export default function Sidebar({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-zinc-800/60 px-3 py-3">
+        <div className="border-t border-zinc-800/60 px-3 py-3 space-y-1">
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl">
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center flex-shrink-0">
               <span className="text-xs font-bold text-white">
@@ -138,6 +151,13 @@ export default function Sidebar({
               </span>
             </div>
             <span className="flex-1 text-xs text-zinc-400 truncate">{user?.email}</span>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="text-zinc-600 hover:text-zinc-300 transition-colors p-1 rounded-lg hover:bg-zinc-800"
+              title="Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
             <button
               data-testid="button-sign-out"
               onClick={signOut}
@@ -149,6 +169,89 @@ export default function Sidebar({
           </div>
         </div>
       </aside>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { setShowSettings(false); setConfirmDeleteAll(false); }}>
+          <div className="bg-[#1a1a1a] border border-zinc-800 rounded-2xl w-full max-w-sm p-5 space-y-5" onClick={(e) => e.stopPropagation()}>
+            {/* Modal Header */}
+            <div className="flex items-center justify-between">
+              <h2 className="text-white font-semibold text-base">Settings</h2>
+              <button onClick={() => { setShowSettings(false); setConfirmDeleteAll(false); }} className="text-zinc-500 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Theme */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Theme</p>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: "light", label: "Light", icon: Sun },
+                  { value: "dark", label: "Dark", icon: Moon },
+                  { value: "system", label: "System", icon: Monitor },
+                ].map(({ value, label, icon: Icon }) => (
+                  <button
+                    key={value}
+                    onClick={() => setTheme(value as "light" | "dark" | "system")}
+                    className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border text-xs transition-all ${
+                      theme === value
+                        ? "border-violet-500 bg-violet-600/10 text-violet-300"
+                        : "border-zinc-700 bg-zinc-800/40 text-zinc-400 hover:border-zinc-600"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Account */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Account</p>
+              <div className="flex items-center gap-3 px-3 py-2.5 bg-zinc-800/40 rounded-xl">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                  <span className="text-xs font-bold text-white">
+                    {user?.email?.[0]?.toUpperCase() ?? "U"}
+                  </span>
+                </div>
+                <span className="flex-1 text-xs text-zinc-300 truncate">{user?.email}</span>
+              </div>
+              <button
+                onClick={switchAccount}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-800/40 text-zinc-300 hover:text-white hover:border-zinc-600 text-sm transition-all"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Switch account
+              </button>
+              <button
+                onClick={signOut}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-800/40 text-red-400 hover:text-red-300 hover:border-red-800 text-sm transition-all"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign out
+              </button>
+            </div>
+
+            {/* Danger Zone */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Danger Zone</p>
+              <button
+                onClick={handleDeleteAll}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-sm transition-all ${
+                  confirmDeleteAll
+                    ? "border-red-500 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                    : "border-zinc-700 bg-zinc-800/40 text-zinc-400 hover:text-red-400 hover:border-red-800"
+                }`}
+              >
+                <Trash2 className="w-4 h-4" />
+                {confirmDeleteAll ? "Tap again to confirm delete all" : "Delete all conversations"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
