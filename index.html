@@ -26,7 +26,7 @@
     <meta name="twitter:description" content="Nexus AI — A limitless powerful AI assistant." />
 
     <!-- Icons -->
-    <link rel="icon" type="image/png" href="/icon-192.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -35,6 +35,7 @@
       * {
         -webkit-tap-highlight-color: transparent;
         -webkit-touch-callout: none;
+        box-sizing: border-box;
       }
       html, body {
         margin: 0;
@@ -44,6 +45,8 @@
         overflow: hidden;
         background-color: #0d0d0d;
         overscroll-behavior: none;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
       }
       #root {
         width: 100%;
