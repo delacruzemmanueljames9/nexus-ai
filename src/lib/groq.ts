@@ -31,6 +31,11 @@ export async function streamGroqResponse(
     (m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url")
   );
 
+  // Vision model only supports single-turn — send only the message containing the image
+  const finalMessages = hasVision
+    ? messages.filter((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url"))
+    : messages;
+
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -41,7 +46,7 @@ export async function streamGroqResponse(
       model: hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        ...messages,
+        ...finalMessages,
       ],
       stream: true,
       max_tokens: 2048,
