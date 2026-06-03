@@ -191,8 +191,10 @@ export default function ChatPage() {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
+    // Keep only last 10 messages to avoid token limit
+    const recentMessages = messages.slice(-10);
     const history: MessageContent[] = [
-      ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      ...recentMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
       { role: "user", content: userMessageContent },
     ];
 
@@ -250,7 +252,8 @@ export default function ChatPage() {
     const messagesWithoutLast = messages.filter((m) => m.id !== lastAssistant.id);
     setMessages(messagesWithoutLast);
 
-    const history: MessageContent[] = messagesWithoutLast.map((m) => ({
+    // Keep only last 10 messages to avoid token limit
+    const history: MessageContent[] = messagesWithoutLast.slice(-10).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
@@ -422,16 +425,6 @@ export default function ChatPage() {
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
-                    const maxSize = 50 * 1024 * 1024;
-                    if (file.size > maxSize) {
-                      toast({
-                        title: "File too large",
-                        description: "Maximum file size is 50MB.",
-                        variant: "destructive",
-                      });
-                      e.target.value = "";
-                      return;
-                    }
                     setAttachedFile(file);
                   }
                   e.target.value = "";
