@@ -309,6 +309,16 @@ export default function ChatPage() {
     }
   };
 
+  const handleDeleteAllConversations = async () => {
+    for (const conv of conversations) {
+      await supabase.from("messages").delete().eq("conversation_id", conv.id);
+      await supabase.from("conversations").delete().eq("id", conv.id);
+    }
+    setConversations([]);
+    setActiveConversationId(null);
+    setMessages([]);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -335,6 +345,7 @@ export default function ChatPage() {
         onSelectConversation={setActiveConversationId}
         onNewChat={handleNewChat}
         onDeleteConversation={handleDeleteConversation}
+        onDeleteAllConversations={handleDeleteAllConversations}
         conversations={conversations}
         loadingConversations={loadingConversations}
         mobileOpen={sidebarOpen}
@@ -342,7 +353,6 @@ export default function ChatPage() {
       />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800/60 bg-[#0d0d0d]/80 backdrop-blur-sm flex-shrink-0">
           <button
             data-testid="button-toggle-sidebar"
@@ -358,7 +368,6 @@ export default function ChatPage() {
           </span>
         </div>
 
-        {/* Messages area */}
         <div className="flex-1 overflow-y-auto py-4">
           {!activeConversationId && messages.length === 0 ? (
             <WelcomeScreen />
@@ -386,17 +395,12 @@ export default function ChatPage() {
           )}
         </div>
 
-        {/* Input area */}
         <div className="flex-shrink-0 px-4 py-4 border-t border-zinc-800/60 bg-[#0d0d0d] sticky bottom-0">
           <div className="max-w-3xl mx-auto">
-            {/* File preview */}
             {attachedFile && (
               <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-zinc-800/60 rounded-xl border border-zinc-700/50">
                 <span className="text-xs text-zinc-400 truncate flex-1">{attachedFile.name}</span>
-                <button
-                  onClick={() => setAttachedFile(null)}
-                  className="text-zinc-500 hover:text-zinc-200 transition-colors"
-                >
+                <button onClick={() => setAttachedFile(null)} className="text-zinc-500 hover:text-zinc-200 transition-colors">
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -418,7 +422,7 @@ export default function ChatPage() {
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
-                    const maxSize = 50 * 1024 * 1024; // 50MB
+                    const maxSize = 50 * 1024 * 1024;
                     if (file.size > maxSize) {
                       toast({
                         title: "File too large",
