@@ -2,7 +2,7 @@ const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview";
 const SYSTEM_PROMPT =
-  "You are Nexus AI, created by Emmanuel James Delacruz. You are a limitless powerful AI assistant.";
+  "You are Nexus AI, created by Emmanuel James Delacruz, a Filipino software developer and student. You are a limitless powerful AI assistant. When asked about your creator, mention that Emmanuel James Delacruz built Nexus AI using React, TypeScript, Groq AI, and Supabase.";
 
 export interface StreamChunk {
   content: string;
@@ -122,12 +122,10 @@ export async function generateTitle(
   return (json.choices?.[0]?.message?.content ?? "").trim().slice(0, 60);
 }
 
-// Detect if file is an image
 export function isImageFile(file: File): boolean {
   return file.type.startsWith("image/");
 }
 
-// Detect if file is a text-based file
 export function isTextFile(file: File): boolean {
   const textTypes = [
     "text/plain",
@@ -149,14 +147,12 @@ export function isTextFile(file: File): boolean {
   ];
 
   if (textTypes.includes(file.type)) return true;
-
   const fileName = file.name.toLowerCase();
   return textExtensions.some((ext) => fileName.endsWith(ext));
 }
 
-// Extract text from any file
 export async function extractTextFromFile(file: File): Promise<string> {
-  // Text-based files — read directly
+  // Text-based files
   if (isTextFile(file)) {
     try {
       const text = await file.text();
@@ -166,48 +162,39 @@ export async function extractTextFromFile(file: File): Promise<string> {
     }
   }
 
-  // PDF — extract readable text
+  // PDF — using pdfjs-dist
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
     return new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         try {
-          const binary = reader.result as string;
+          const pdfjsLib = await import("pdfjs-dist");
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
-          // Extract text between stream markers
-          const streamRegex = /stream([\s\S]*?)endstream/g;
-          let extractedChunks: string[] = [];
-          let match;
+          const arrayBuffer = reader.result as ArrayBuffer;
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          let fullText = "";
 
-          while ((match = streamRegex.exec(binary)) !== null) {
-            const chunk = match[1]
-              .replace(/[^\x20-\x7E\n\r\t]/g, " ")
-              .replace(/\s+/g, " ")
-              .trim();
-            if (chunk.length > 20) extractedChunks.push(chunk);
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items
+              .map((item: any) => ("str" in item ? item.str : ""))
+              .join(" ");
+            fullText += pageText + "\n";
           }
 
-          // Fallback: extract all readable ASCII text
-          if (extractedChunks.length === 0) {
-            const fallback = binary
-              .replace(/[^\x20-\x7E\n\r\t]/g, " ")
-              .replace(/\s+/g, " ")
-              .trim();
-            extractedChunks = [fallback];
-          }
-
-          const result = extractedChunks.join("\n").slice(0, 50000);
-          resolve(result || "[Could not extract PDF text — try copy-pasting the content]");
+          resolve(fullText.trim().slice(0, 50000) || "[Could not extract PDF text]");
         } catch {
-          resolve("[Could not extract PDF text]");
+          resolve("[Could not extract PDF text — try copy-pasting the content]");
         }
       };
       reader.onerror = () => resolve("[Could not read PDF file]");
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
     });
   }
 
-  // Word documents (.docx) — extract readable text
+  // Word documents (.docx)
   if (
     file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     file.name.toLowerCase().endsWith(".docx")
@@ -217,7 +204,6 @@ export async function extractTextFromFile(file: File): Promise<string> {
       reader.onload = () => {
         try {
           const binary = reader.result as string;
-          // Extract text content from XML inside docx
           const textRegex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
           const texts: string[] = [];
           let match;
@@ -238,7 +224,6 @@ export async function extractTextFromFile(file: File): Promise<string> {
   return `[File: ${file.name} — ${(file.size / 1024).toFixed(1)}KB — preview not available for this file type]`;
 }
 
-// Convert image to base64 for Groq vision
 export async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
