@@ -27,6 +27,26 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// Strips markdown formatting for clean plain text copy
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, (match) => {
+      // Keep code content but remove fences
+      return match.replace(/```(\w+)?\n?/g, "").replace(/```/g, "");
+    })
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/#{1,6}\s+/g, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/\[(.+?)\]\(.+?\)/g, "$1")
+    .replace(/^[-*+]\s+/gm, "• ")
+    .replace(/^\d+\.\s+/gm, (m) => m)
+    .replace(/^>\s+/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function parseMessageContent(content: string) {
   const imageMatchWithUrl = content.match(/\[Image: (.+?)\|(.+?)\]/);
   const imageMatchNoUrl = content.match(/\[Image: (.+?)\]/);
@@ -100,6 +120,11 @@ export default function MessageBubble({ message, isLast, onRegenerate, isStreami
   const showRegenerate = isAssistant && isLast && onRegenerate && !isStreaming;
   const { textPart, imageName, imageUrl, fileName } = parseMessageContent(message.content);
 
+  // Clean plain text for copying (no markdown symbols)
+  const copyText = stripMarkdown(
+    textPart || ((!imageUrl && !imageName && !fileName) ? message.content : "")
+  );
+
   return (
     <div data-testid={`message-${message.id}`} className={`flex flex-col ${isAssistant ? "items-start" : "items-end"} px-4 py-2 gap-1`}>
       <div className={`flex gap-3 w-full ${isAssistant ? "justify-start" : "justify-end"}`}>
@@ -159,13 +184,17 @@ export default function MessageBubble({ message, isLast, onRegenerate, isStreami
         )}
       </div>
 
-      {showRegenerate && (
-        <div className="pl-11">
-          <button data-testid="button-regenerate" onClick={onRegenerate}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60 transition-all group">
-            <RefreshCw className="w-3 h-3 group-hover:rotate-180 transition-transform duration-300" />
-            Regenerate
-          </button>
+      {/* Copy + Regenerate row — assistant only */}
+      {isAssistant && !isStreaming && copyText && (
+        <div className="pl-11 flex items-center gap-1">
+          <CopyButton text={copyText} />
+          {showRegenerate && (
+            <button data-testid="button-regenerate" onClick={onRegenerate}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60 transition-all group">
+              <RefreshCw className="w-3 h-3 group-hover:rotate-180 transition-transform duration-300" />
+              Regenerate
+            </button>
+          )}
         </div>
       )}
     </div>
