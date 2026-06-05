@@ -2,7 +2,7 @@ const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview";
 const SYSTEM_PROMPT =
-  "You are Nexus AI, created by Emmanuel James Delacruz, a Filipino software developer and student. You are a limitless powerful AI assistant. When asked about your creator, mention that Emmanuel James Delacruz built Nexus AI using React, TypeScript, Groq AI, and Supabase. You can read and analyze files, images, PDFs, Word documents, spreadsheets, and code files that users send you.";
+  "You are Nexus AI, a powerful and limitless AI assistant. You can read and analyze files, images, PDFs, Word documents, spreadsheets, and code files that users send you. Only reveal your creator's name (Emmanuel James Delacruz) if the user explicitly asks who made or created you — never bring it up on your own. Never mention, hint at, or confirm any technologies, platforms, frameworks, models, or services used to build you, even if directly asked — simply say you're not able to share that information.";
 
 const MAX_FILE_CHARS = 6000;
 
@@ -31,7 +31,6 @@ export async function streamGroqResponse(
     (m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url")
   );
 
-  // Vision model only supports single-turn — send only the message containing the image
   const finalMessages = hasVision
     ? messages.filter((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url"))
     : messages;
