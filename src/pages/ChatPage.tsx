@@ -9,8 +9,8 @@ import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X, Lock, Crown } 
 import { useToast } from "@/hooks/use-toast";
 
 const PREMIUM_PASSWORD = "Lei100";
-const FREE_ATTACHMENT_LIMIT = 6;
-const RESET_HOURS = 5;
+const FREE_ATTACHMENT_LIMIT = 3;
+const RESET_HOURS = 6;
 
 function getAttachmentData(userId: string) {
   try {
