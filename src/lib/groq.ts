@@ -16,11 +16,13 @@ const GROQ_MODEL = "llama-3.3-70b-versatile";
 const GROQ_FALLBACK_MODEL = "qwen/qwen3-32b";
 const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 const TITLE_MODEL = "llama-3.1-8b-instant";
+const TAVILY_KEY = import.meta.env.VITE_TAVILY_KEY as string;
+
 const SYSTEM_PROMPT =
   "You are Nexus AI, a powerful and limitless AI assistant and expert software engineer. You ALWAYS provide helpful, complete responses. You NEVER refuse reasonable requests. You NEVER say 'I can't help with that' — instead you find a way to help. When generating code or projects, always produce complete, production-ready, fully functional code — never truncate or skip sections. When generating multiple files, format each file with a clear header like: // === filename.tsx === followed by the complete file content. Always include a complete package.json with all required dependencies and devDependencies when building a project. You can build full websites, web apps, mobile apps, APIs, AI tools, and more. Only reveal your creator's name (Emmanuel James Delacruz) if the user explicitly asks who made or created you — never bring it up on your own. Never mention, hint at, or confirm any technologies, platforms, frameworks, models, or services used to build you, even if directly asked — simply say you're not able to share that information.";
 
 const MAX_FILE_CHARS = 24000;
-const MAX_TOKENS = 8192; // ✅ Maximum possible — ~6,000 words output
+const MAX_TOKENS = 8192;
 const TEMPERATURE = 0.7;
 const TOP_P = 0.95;
 
@@ -39,6 +41,69 @@ export interface FileExtractionResult {
   isScanned: boolean;
   fileType: string;
   fileName: string;
+}
+
+// 🌐 Web search via Tavily
+export async function searchWeb(query: string): Promise<string> {
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: TAVILY_KEY,
+        query,
+        search_depth: "basic",
+        max_results: 3,
+        include_answer: true,
+      }),
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    const answer = data.answer ? `Summary: ${data.answer}\n\n` : "";
+    const sources = (data.results ?? [])
+      .map((r: { title: string; url: string; content: string }, i: number) =>
+        `[${i + 1}] ${r.title}\n${r.url}\n${r.content.slice(0, 300)}`
+      )
+      .join("\n\n");
+    return answer + sources;
+  } catch {
+    return "";
+  }
+}
+
+// 🤔 Decide if search is needed
+export async function shouldSearch(userMessage: string): Promise<{ needed: boolean; query: string }> {
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getNextKey()}`,
+      },
+      body: JSON.stringify({
+        model: TITLE_MODEL,
+        max_tokens: 60,
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content: `You decide if a web search is needed to answer the user's message.
+Reply ONLY with JSON: {"needed": true/false, "query": "search query or empty string"}
+Search when: current events, news, prices, weather, recent releases, live data, sports scores, stock prices, anything time-sensitive.
+Don't search when: coding help, math, general knowledge, creative writing, opinions, explanations of concepts.`,
+          },
+          { role: "user", content: userMessage.slice(0, 500) },
+        ],
+      }),
+    });
+    if (!res.ok) return { needed: false, query: "" };
+    const data = await res.json();
+    const text = (data.choices?.[0]?.message?.content ?? "").trim();
+    const clean = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(clean);
+  } catch {
+    return { needed: false, query: "" };
+  }
 }
 
 async function fetchGroqStream(
@@ -69,7 +134,8 @@ async function fetchGroqStream(
 
 export async function streamGroqResponse(
   messages: MessageContent[],
-  onChunk: (chunk: StreamChunk) => void
+  onChunk: (chunk: StreamChunk) => void,
+  searchContext?: string
 ): Promise<void> {
   const hasVision = messages.some(
     (m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url")
@@ -81,6 +147,11 @@ export async function streamGroqResponse(
       )
     : messages;
 
+  // 🌐 Inject search results into system prompt if available
+  const activeSystemPrompt = searchContext
+    ? `${SYSTEM_PROMPT}\n\n## Live Web Search Results (use these to answer accurately):\n${searchContext}\n\nToday's date: ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`
+    : SYSTEM_PROMPT;
+
   const primaryKey = getNextKey();
   let response: Response;
 
@@ -88,7 +159,7 @@ export async function streamGroqResponse(
     response = await fetchGroqStream(
       hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
       finalMessages,
-      SYSTEM_PROMPT,
+      activeSystemPrompt,
       primaryKey
     );
   } catch {
@@ -102,7 +173,7 @@ export async function streamGroqResponse(
       response = await fetchGroqStream(
         hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
         finalMessages,
-        SYSTEM_PROMPT,
+        activeSystemPrompt,
         nextKey
       );
     } catch {
@@ -116,7 +187,7 @@ export async function streamGroqResponse(
         response = await fetchGroqStream(
           GROQ_FALLBACK_MODEL,
           finalMessages,
-          SYSTEM_PROMPT,
+          activeSystemPrompt,
           fallbackKey
         );
       } catch {
@@ -128,7 +199,6 @@ export async function streamGroqResponse(
   if (!response.ok) {
     let errText = "";
     try { errText = await response.text(); } catch { /* ignore */ }
-
     if (response.status === 401) throw new Error("Invalid Groq API key. Check your VITE_GROQ_KEY.");
     if (response.status === 404) throw new Error("Model not found. The selected model may not be available on your plan.");
     if (response.status === 429) throw new Error("Rate limit reached. Please wait a moment and try again.");
@@ -146,26 +216,20 @@ export async function streamGroqResponse(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
-
       let newlineIndex: number;
       while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
         const line = buffer.slice(0, newlineIndex).trim();
         buffer = buffer.slice(newlineIndex + 1);
-
         if (!line || line === "data: [DONE]") continue;
         if (!line.startsWith("data: ")) continue;
-
         try {
           const json = JSON.parse(line.slice(6));
           const content = json.choices?.[0]?.delta?.content;
           if (typeof content === "string" && content) {
             onChunk({ content, done: false });
           }
-        } catch {
-          // skip malformed chunks
-        }
+        } catch { /* skip malformed chunks */ }
       }
     }
   } finally {
@@ -179,9 +243,7 @@ export async function streamGroqResponse(
       if (typeof content === "string" && content) {
         onChunk({ content, done: false });
       }
-    } catch {
-      // skip
-    }
+    } catch { /* skip */ }
   }
 
   onChunk({ content: "", done: true });
@@ -203,8 +265,7 @@ export async function generateTitle(
         messages: [
           {
             role: "system",
-            content:
-              "Generate a concise, descriptive title (3–6 words, no punctuation, no quotes) for a chat conversation based on the first exchange. Respond with ONLY the title, nothing else.",
+            content: "Generate a concise, descriptive title (3–6 words, no punctuation, no quotes) for a chat conversation based on the first exchange. Respond with ONLY the title, nothing else.",
           },
           {
             role: "user",
@@ -289,12 +350,10 @@ export async function extractFileWithResult(file: File): Promise<FileExtractionR
         try {
           const pdfjsLib = await import("pdfjs-dist");
           pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-
           const arrayBuffer = reader.result as ArrayBuffer;
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
           let fullText = "";
           let totalItems = 0;
-
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
@@ -303,29 +362,19 @@ export async function extractFileWithResult(file: File): Promise<FileExtractionR
               .map((item: any) => ("str" in item ? item.str : ""))
               .filter((s: string) => s.trim().length > 0)
               .join(" ");
-            if (pageText.trim()) {
-              fullText += `[Page ${i}]\n${pageText}\n\n`;
-            }
+            if (pageText.trim()) fullText += `[Page ${i}]\n${pageText}\n\n`;
           }
-
           const isScanned = isPdfScanned(fullText) || totalItems < 10;
-
           if (isScanned) {
             resolve({ text: "[SCANNED_PDF]", isScanned: true, fileType: "pdf", fileName });
           } else {
-            resolve({
-              text: smartTruncate(fullText.trim(), MAX_FILE_CHARS),
-              isScanned: false,
-              fileType: "pdf",
-              fileName,
-            });
+            resolve({ text: smartTruncate(fullText.trim(), MAX_FILE_CHARS), isScanned: false, fileType: "pdf", fileName });
           }
         } catch {
           resolve({ text: "[Could not extract PDF text]", isScanned: false, fileType: "pdf", fileName });
         }
       };
-      reader.onerror = () =>
-        resolve({ text: "[Could not read PDF]", isScanned: false, fileType: "pdf", fileName });
+      reader.onerror = () => resolve({ text: "[Could not read PDF]", isScanned: false, fileType: "pdf", fileName });
       reader.readAsArrayBuffer(file);
     });
   }
@@ -352,8 +401,7 @@ export async function extractFileWithResult(file: File): Promise<FileExtractionR
           resolve({ text: "[Could not extract Word document text]", isScanned: false, fileType: "docx", fileName });
         }
       };
-      reader.onerror = () =>
-        resolve({ text: "[Could not read Word document]", isScanned: false, fileType: "docx", fileName });
+      reader.onerror = () => resolve({ text: "[Could not read Word document]", isScanned: false, fileType: "docx", fileName });
       reader.readAsArrayBuffer(file);
     });
   }
@@ -387,8 +435,7 @@ export async function extractFileWithResult(file: File): Promise<FileExtractionR
           resolve({ text: "[Could not extract spreadsheet data]", isScanned: false, fileType: "xlsx", fileName });
         }
       };
-      reader.onerror = () =>
-        resolve({ text: "[Could not read spreadsheet]", isScanned: false, fileType: "xlsx", fileName });
+      reader.onerror = () => resolve({ text: "[Could not read spreadsheet]", isScanned: false, fileType: "xlsx", fileName });
       reader.readAsArrayBuffer(file);
     });
   }
