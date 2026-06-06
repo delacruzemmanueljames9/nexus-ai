@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
-import { streamGroqResponse, generateTitle, extractTextFromFile, fileToBase64, type MessageContent } from "@/lib/groq";
+import { streamGroqResponse, generateTitle, extractTextFromFile, fileToBase64, shouldSearch, searchWeb, type MessageContent } from "@/lib/groq";
 import { useAuth } from "@/context/AuthContext";
 import type { Conversation, Message } from "@/types";
 import Sidebar from "@/components/Sidebar";
 import MessageBubble from "@/components/MessageBubble";
 import TypingIndicator from "@/components/TypingIndicator";
-import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X, Lock, Crown } from "lucide-react";
+import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X, Lock, Crown, Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const PREMIUM_PASSWORD = "Lei100";
@@ -49,7 +49,7 @@ function PremiumModal({ onClose, onUnlock }: { onClose: () => void; onUnlock: ()
           </div>
           <h2 className="text-lg font-bold text-white">Upgrade to Premium</h2>
           <p className="text-xs text-zinc-400 text-center mt-1">
-            You've used your 6 free file attachments. Enter your premium code to unlock unlimited uploads.
+            You've used your free file attachments. Enter your premium code to unlock unlimited uploads.
           </p>
         </div>
         <input
@@ -67,10 +67,7 @@ function PremiumModal({ onClose, onUnlock }: { onClose: () => void; onUnlock: ()
         >
           Unlock Premium
         </button>
-        <button
-          onClick={onClose}
-          className="w-full py-2 rounded-xl text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
-        >
+        <button onClick={onClose} className="w-full py-2 rounded-xl text-zinc-500 text-sm hover:text-zinc-300 transition-colors">
           Maybe later
         </button>
       </div>
@@ -89,7 +86,8 @@ export default function ChatPage() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [isThinking, setIsThinking] = useState(false); // ✅ typing indicator
+  const [isThinking, setIsThinking] = useState(false);
+  const [isSearching, setIsSearching] = useState(false); // 🌐 web search indicator
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
@@ -125,9 +123,7 @@ export default function ChatPage() {
   const incrementAttachCount = useCallback(() => {
     if (!user) return;
     const data = getAttachInfo();
-    if (!data.isPremium) {
-      saveAttachmentData(user.id, { ...data, count: data.count + 1 });
-    }
+    if (!data.isPremium) saveAttachmentData(user.id, { ...data, count: data.count + 1 });
   }, [user, getAttachInfo]);
 
   const handleUnlockPremium = useCallback(() => {
@@ -167,14 +163,8 @@ export default function ChatPage() {
   };
 
   useEffect(() => {
-    if (!activeConversationId) {
-      setMessages([]);
-      return;
-    }
-    if (skipNextLoadRef.current) {
-      skipNextLoadRef.current = false;
-      return;
-    }
+    if (!activeConversationId) { setMessages([]); return; }
+    if (skipNextLoadRef.current) { skipNextLoadRef.current = false; return; }
     loadMessages(activeConversationId);
   }, [activeConversationId]);
 
@@ -241,11 +231,7 @@ export default function ChatPage() {
     if ((!trimmed && !attachedFile) || streaming) return;
 
     const fileToSend = attachedFile;
-
-    if (fileToSend && !canAttach()) {
-      setShowPremiumModal(true);
-      return;
-    }
+    if (fileToSend && !canAttach()) { setShowPremiumModal(true); return; }
 
     setInput("");
     setAttachedFile(null);
@@ -268,7 +254,6 @@ export default function ChatPage() {
     if (fileToSend) {
       incrementAttachCount();
       const isImage = fileToSend.type.startsWith("image/");
-
       if (isImage) {
         const base64 = await fileToBase64(fileToSend);
         const dataUrl = `data:${fileToSend.type};base64,${base64}`;
@@ -309,14 +294,28 @@ export default function ChatPage() {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
-    // 🔥 Maximized memory — last 30 messages
     const recentMessages = currentMessages.slice(-30);
     const history: MessageContent[] = recentMessages.map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.id === tempUserMsg.id ? userMessageContent : m.content,
     }));
 
-    // ✅ Show typing indicator before first token
+    // 🌐 Web search — only for text messages, not images
+    let searchContext = "";
+    const isImageMessage = Array.isArray(userMessageContent);
+    if (!isImageMessage && trimmed) {
+      try {
+        setIsSearching(true);
+        const { needed, query } = await shouldSearch(trimmed);
+        if (needed && query) {
+          const results = await searchWeb(query);
+          if (results) searchContext = results;
+        }
+      } catch { /* silent fail */ } finally {
+        setIsSearching(false);
+      }
+    }
+
     setIsThinking(true);
     setStreaming(true);
     abortRef.current = false;
@@ -353,7 +352,7 @@ export default function ChatPage() {
             if (isFirstMessage) autoRenameConversation(conversationId!, userMessageText, fullContent);
           }
         }
-      });
+      }, searchContext);
     } catch (err: unknown) {
       setIsThinking(false);
       if (!abortRef.current) {
@@ -363,6 +362,7 @@ export default function ChatPage() {
     } finally {
       setStreaming(false);
       setIsThinking(false);
+      setIsSearching(false);
     }
   };
 
@@ -370,6 +370,7 @@ export default function ChatPage() {
     abortRef.current = true;
     setStreaming(false);
     setIsThinking(false);
+    setIsSearching(false);
   };
 
   const handleRegenerate = async () => {
@@ -382,7 +383,6 @@ export default function ChatPage() {
     const messagesWithoutLast = messages.filter((m) => m.id !== lastAssistant.id);
     setMessages(messagesWithoutLast);
 
-    // 🔥 Maximized memory — last 30 messages
     const history: MessageContent[] = messagesWithoutLast.slice(-30).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
@@ -484,10 +484,7 @@ export default function ChatPage() {
   return (
     <div className="flex h-[100dvh] bg-[#0d0d0d] overflow-hidden">
       {showPremiumModal && (
-        <PremiumModal
-          onClose={() => setShowPremiumModal(false)}
-          onUnlock={handleUnlockPremium}
-        />
+        <PremiumModal onClose={() => setShowPremiumModal(false)} onUnlock={handleUnlockPremium} />
       )}
 
       <Sidebar
@@ -516,14 +513,19 @@ export default function ChatPage() {
               ? conversations.find((c) => c.id === activeConversationId)?.title ?? "Conversation"
               : "New chat"}
           </span>
+          {/* 🌐 Search indicator in header */}
+          {isSearching && (
+            <span className="flex items-center gap-1 text-xs text-emerald-400 animate-pulse">
+              <Globe className="w-3 h-3" /> Searching web...
+            </span>
+          )}
           {attachInfo.isPremium ? (
             <span className="flex items-center gap-1 text-xs text-amber-400 font-medium">
               <Crown className="w-3 h-3" /> Premium
             </span>
           ) : (
             <span className="text-xs text-zinc-500">
-              {remaining} uploads left
-              {resetTime && ` · resets in ${resetTime}`}
+              {remaining} uploads left{resetTime && ` · resets in ${resetTime}`}
             </span>
           )}
         </div>
@@ -550,7 +552,6 @@ export default function ChatPage() {
                   />
                 );
               })}
-              {/* ✅ Typing indicator — shows while waiting for first token */}
               {isThinking && <TypingIndicator />}
               <div ref={messagesEndRef} />
             </div>
@@ -640,7 +641,7 @@ export default function ChatPage() {
 
 function WelcomeScreen() {
   const suggestions = [
-    "Explain quantum computing in simple terms",
+    "What's the latest news today?",
     "Write a Python function to sort a list",
     "What are the best practices for REST APIs?",
     "Help me brainstorm startup ideas",
@@ -652,6 +653,10 @@ function WelcomeScreen() {
       </div>
       <h2 className="text-2xl font-bold text-white mb-2">How can I help you?</h2>
       <p className="text-sm text-zinc-500 mb-8 max-w-xs">I'm Nexus AI, a limitless powerful assistant. Ask me anything.</p>
+      <div className="flex items-center gap-1.5 mb-6 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+        <Globe className="w-3 h-3 text-emerald-400" />
+        <span className="text-xs text-emerald-400">Connected to the web</span>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
         {suggestions.map((s) => (<SuggestionCard key={s} text={s} />))}
       </div>
