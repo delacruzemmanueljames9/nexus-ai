@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import type { Conversation, Message } from "@/types";
 import Sidebar from "@/components/Sidebar";
 import MessageBubble from "@/components/MessageBubble";
+import TypingIndicator from "@/components/TypingIndicator";
 import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X, Lock, Crown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -88,6 +89,7 @@ export default function ChatPage() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [isThinking, setIsThinking] = useState(false); // ✅ typing indicator
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
@@ -101,7 +103,7 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
+  useEffect(() => { scrollToBottom(); }, [messages, isThinking, scrollToBottom]);
   useEffect(() => { if (!user) return; loadConversations(); }, [user]);
 
   const getAttachInfo = useCallback(() => {
@@ -307,11 +309,20 @@ export default function ChatPage() {
       setMessages((prev) => prev.map((m) => m.id === tempUserMsg.id ? savedUserMsg : m));
     }
 
-    const recentMessages = currentMessages.slice(-10);
+    // 🔥 Maximized memory — last 30 messages
+    const recentMessages = currentMessages.slice(-30);
     const history: MessageContent[] = recentMessages.map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.id === tempUserMsg.id ? userMessageContent : m.content,
     }));
+
+    // ✅ Show typing indicator before first token
+    setIsThinking(true);
+    setStreaming(true);
+    abortRef.current = false;
+
+    let firstChunk = true;
+    let fullContent = "";
 
     const tempAssistantMsg: Message = {
       id: `temp-assistant-${Date.now()}`,
@@ -320,18 +331,20 @@ export default function ChatPage() {
       content: "",
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, tempAssistantMsg]);
-    setStreaming(true);
-    abortRef.current = false;
-    let fullContent = "";
 
     try {
       await streamGroqResponse(history, ({ content, done }) => {
         if (abortRef.current) return;
         if (!done) {
+          if (firstChunk) {
+            firstChunk = false;
+            setIsThinking(false);
+            setMessages((prev) => [...prev, tempAssistantMsg]);
+          }
           fullContent += content;
           setMessages((prev) => prev.map((m) => m.id === tempAssistantMsg.id ? { ...m, content: fullContent } : m));
         } else {
+          setIsThinking(false);
           if (fullContent) {
             saveMessage(conversationId!, "assistant", fullContent).then((saved) => {
               if (saved) setMessages((prev) => prev.map((m) => m.id === tempAssistantMsg.id ? saved : m));
@@ -342,16 +355,22 @@ export default function ChatPage() {
         }
       });
     } catch (err: unknown) {
+      setIsThinking(false);
       if (!abortRef.current) {
         toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to get AI response", variant: "destructive" });
         setMessages((prev) => prev.filter((m) => m.id !== tempAssistantMsg.id));
       }
     } finally {
       setStreaming(false);
+      setIsThinking(false);
     }
   };
 
-  const handleStop = () => { abortRef.current = true; setStreaming(false); };
+  const handleStop = () => {
+    abortRef.current = true;
+    setStreaming(false);
+    setIsThinking(false);
+  };
 
   const handleRegenerate = async () => {
     if (!activeConversationId || streaming) return;
@@ -363,7 +382,8 @@ export default function ChatPage() {
     const messagesWithoutLast = messages.filter((m) => m.id !== lastAssistant.id);
     setMessages(messagesWithoutLast);
 
-    const history: MessageContent[] = messagesWithoutLast.slice(-10).map((m) => ({
+    // 🔥 Maximized memory — last 30 messages
+    const history: MessageContent[] = messagesWithoutLast.slice(-30).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
@@ -375,18 +395,27 @@ export default function ChatPage() {
       content: "",
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, tempAssistantMsg]);
+
+    setIsThinking(true);
     setStreaming(true);
     abortRef.current = false;
+
+    let firstChunk = true;
     let fullContent = "";
 
     try {
       await streamGroqResponse(history, ({ content, done }) => {
         if (abortRef.current) return;
         if (!done) {
+          if (firstChunk) {
+            firstChunk = false;
+            setIsThinking(false);
+            setMessages((prev) => [...prev, tempAssistantMsg]);
+          }
           fullContent += content;
           setMessages((prev) => prev.map((m) => m.id === tempAssistantMsg.id ? { ...m, content: fullContent } : m));
         } else {
+          setIsThinking(false);
           if (fullContent) {
             saveMessage(activeConversationId, "assistant", fullContent).then((saved) => {
               if (saved) setMessages((prev) => prev.map((m) => m.id === tempAssistantMsg.id ? saved : m));
@@ -396,12 +425,14 @@ export default function ChatPage() {
         }
       });
     } catch (err: unknown) {
+      setIsThinking(false);
       if (!abortRef.current) {
         toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to regenerate", variant: "destructive" });
         setMessages((prev) => prev.filter((m) => m.id !== tempAssistantMsg.id));
       }
     } finally {
       setStreaming(false);
+      setIsThinking(false);
     }
   };
 
@@ -519,6 +550,8 @@ export default function ChatPage() {
                   />
                 );
               })}
+              {/* ✅ Typing indicator — shows while waiting for first token */}
+              {isThinking && <TypingIndicator />}
               <div ref={messagesEndRef} />
             </div>
           )}
