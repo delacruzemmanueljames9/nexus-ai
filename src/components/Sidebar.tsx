@@ -5,7 +5,7 @@ import { useTheme } from "@/context/ThemeContext";
 import type { Conversation } from "@/types";
 import {
   Plus, Trash2, MessageSquare, LogOut, Sparkles, X,
-  Settings, Sun, Moon, Monitor, UserRound, RefreshCw
+  Settings, Sun, Moon, Monitor, RefreshCw, Github, Eye, EyeOff
 } from "lucide-react";
 
 interface SidebarProps {
@@ -36,6 +36,10 @@ export default function Sidebar({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [githubToken, setGithubToken] = useState(() => localStorage.getItem("nexus_github_token") || "");
+  const [githubRepo, setGithubRepo] = useState(() => localStorage.getItem("nexus_github_repo") || "");
+  const [showToken, setShowToken] = useState(false);
+  const [githubSaved, setGithubSaved] = useState(false);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -54,22 +58,26 @@ export default function Sidebar({
     setShowSettings(false);
   };
 
+  const handleSaveGithub = () => {
+    localStorage.setItem("nexus_github_token", githubToken.trim());
+    localStorage.setItem("nexus_github_repo", githubRepo.trim());
+    setGithubSaved(true);
+    setTimeout(() => setGithubSaved(false), 2000);
+  };
+
   const groupedConversations = groupByDate(conversations);
 
   return (
     <>
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 bg-black/60 z-20 lg:hidden" onClick={onCloseMobile} />
       )}
 
-      {/* Sidebar */}
       <aside
         className={`fixed inset-y-0 left-0 z-30 w-72 bg-[#111111] border-r border-zinc-800/60 flex flex-col transition-transform duration-300 lg:relative lg:translate-x-0 ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-4 border-b border-zinc-800/60">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center shadow-md">
@@ -82,7 +90,6 @@ export default function Sidebar({
           </button>
         </div>
 
-        {/* New Chat Button */}
         <div className="px-3 py-3">
           <button
             data-testid="button-new-chat"
@@ -94,7 +101,6 @@ export default function Sidebar({
           </button>
         </div>
 
-        {/* Conversation List */}
         <div className="flex-1 overflow-y-auto px-2 pb-2 scrollbar-thin">
           {loadingConversations ? (
             <div className="space-y-1 px-2 pt-2">
@@ -142,7 +148,6 @@ export default function Sidebar({
           )}
         </div>
 
-        {/* Footer */}
         <div className="border-t border-zinc-800/60 px-3 py-3 space-y-1">
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl">
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center flex-shrink-0">
@@ -170,11 +175,9 @@ export default function Sidebar({
         </div>
       </aside>
 
-      {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { setShowSettings(false); setConfirmDeleteAll(false); }}>
-          <div className="bg-[#1a1a1a] border border-zinc-800 rounded-2xl w-full max-w-sm p-5 space-y-5" onClick={(e) => e.stopPropagation()}>
-            {/* Modal Header */}
+          <div className="bg-[#1a1a1a] border border-zinc-800 rounded-2xl w-full max-w-sm p-5 space-y-5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="text-white font-semibold text-base">Settings</h2>
               <button onClick={() => { setShowSettings(false); setConfirmDeleteAll(false); }} className="text-zinc-500 hover:text-white transition-colors">
@@ -204,6 +207,50 @@ export default function Sidebar({
                     {label}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* GitHub Integration */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">GitHub Integration</p>
+              <p className="text-[11px] text-zinc-600">Push generated code directly to your GitHub repo.</p>
+              <div className="space-y-2">
+                <div className="relative">
+                  <input
+                    type={showToken ? "text" : "password"}
+                    value={githubToken}
+                    onChange={(e) => setGithubToken(e.target.value)}
+                    placeholder="GitHub Personal Access Token"
+                    className="w-full bg-zinc-800/60 border border-zinc-700/60 rounded-xl px-3 py-2.5 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-violet-500/60 pr-9 transition-all"
+                  />
+                  <button
+                    onClick={() => setShowToken(!showToken)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                  >
+                    {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={githubRepo}
+                  onChange={(e) => setGithubRepo(e.target.value)}
+                  placeholder="username/repo-name"
+                  className="w-full bg-zinc-800/60 border border-zinc-700/60 rounded-xl px-3 py-2.5 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-violet-500/60 transition-all"
+                />
+                <button
+                  onClick={handleSaveGithub}
+                  className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-medium transition-all ${
+                    githubSaved
+                      ? "border-green-500 bg-green-500/10 text-green-400"
+                      : "border-zinc-700 bg-zinc-800/40 text-zinc-300 hover:border-violet-500/60 hover:text-violet-300"
+                  }`}
+                >
+                  <Github className="w-3.5 h-3.5" />
+                  {githubSaved ? "Saved!" : "Save GitHub Settings"}
+                </button>
+                <p className="text-[10px] text-zinc-700">
+                  Token needs: repo scope. Create at github.com/settings/tokens
+                </p>
               </div>
             </div>
 
