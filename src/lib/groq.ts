@@ -1,10 +1,10 @@
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
-const GROQ_MODEL = "llama-3.3-70b-versatile";
-const GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview";
+const GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"; // ⬆️ Upgraded to Llama 4
+const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"; // ⬆️ Upgraded vision
 const SYSTEM_PROMPT =
   "You are Nexus AI, a powerful and limitless AI assistant and expert software engineer. When generating code or projects, always produce complete, production-ready, fully functional code — never truncate or skip sections. When generating multiple files, format each file with a clear header like: // === filename.tsx === followed by the complete file content. Always include a complete package.json with all required dependencies and devDependencies when building a project. You can build full websites, web apps, mobile apps, APIs, AI tools, and more. Only reveal your creator's name (Emmanuel James Delacruz) if the user explicitly asks who made or created you — never bring it up on your own. Never mention, hint at, or confirm any technologies, platforms, frameworks, models, or services used to build you, even if directly asked — simply say you're not able to share that information.";
 
-const MAX_FILE_CHARS = 6000;
+const MAX_FILE_CHARS = 12000; // ⬆️ Increased from 6000
 
 export interface StreamChunk {
   content: string;
@@ -32,63 +32,82 @@ export async function streamGroqResponse(
   );
 
   const finalMessages = hasVision
-    ? messages.filter((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url"))
+    ? messages.filter(
+        (m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url")
+      )
     : messages;
 
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${GROQ_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...finalMessages,
-      ],
-      stream: true,
-      max_tokens: 8192,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          ...finalMessages,
+        ],
+        stream: true,
+        max_tokens: 8192,
+        temperature: 0.7,
+        top_p: 0.95,
+      }),
+    });
+  } catch {
+    throw new Error("Network error: Could not reach Groq API. Check your internet connection.");
+  }
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Groq API error: ${response.status} ${err}`);
+    let errText = "";
+    try { errText = await response.text(); } catch { /* ignore */ }
+
+    if (response.status === 401) throw new Error("Invalid Groq API key. Check your VITE_GROQ_KEY.");
+    if (response.status === 429) throw new Error("Rate limit reached. Please wait a moment and try again.");
+    if (response.status === 503) throw new Error("Groq API is temporarily unavailable. Please try again shortly.");
+    throw new Error(`Groq API error ${response.status}: ${errText || "Unknown error"}`);
   }
 
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("No response body");
+  if (!reader) throw new Error("No response body received from Groq API.");
 
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true });
 
-    let newlineIndex: number;
-    while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 1);
+      let newlineIndex: number;
+      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
 
-      if (!line || line === "data: [DONE]") continue;
-      if (!line.startsWith("data: ")) continue;
+        if (!line || line === "data: [DONE]") continue;
+        if (!line.startsWith("data: ")) continue;
 
-      try {
-        const json = JSON.parse(line.slice(6));
-        const content = json.choices?.[0]?.delta?.content;
-        if (typeof content === "string" && content) {
-          onChunk({ content, done: false });
+        try {
+          const json = JSON.parse(line.slice(6));
+          const content = json.choices?.[0]?.delta?.content;
+          if (typeof content === "string" && content) {
+            onChunk({ content, done: false });
+          }
+        } catch {
+          // skip malformed chunks
         }
-      } catch {
-        // skip malformed
       }
     }
+  } finally {
+    reader.releaseLock();
   }
 
+  // flush remaining buffer
   if (buffer.trim() && buffer.trim() !== "data: [DONE]" && buffer.trim().startsWith("data: ")) {
     try {
       const json = JSON.parse(buffer.trim().slice(6));
@@ -108,32 +127,37 @@ export async function generateTitle(
   userMessage: string,
   assistantMessage: string
 ): Promise<string> {
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${GROQ_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Generate a concise, descriptive title (3–6 words, no punctuation, no quotes) for a chat conversation based on the first exchange. Respond with ONLY the title, nothing else.",
-        },
-        {
-          role: "user",
-          content: `User: ${userMessage}\n\nAssistant: ${assistantMessage.slice(0, 300)}`,
-        },
-      ],
-      stream: false,
-      max_tokens: 20,
-    }),
-  });
-  if (!response.ok) return "";
-  const json = await response.json();
-  return (json.choices?.[0]?.message?.content ?? "").trim().slice(0, 60);
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Generate a concise, descriptive title (3–6 words, no punctuation, no quotes) for a chat conversation based on the first exchange. Respond with ONLY the title, nothing else.",
+          },
+          {
+            role: "user",
+            content: `User: ${userMessage}\n\nAssistant: ${assistantMessage.slice(0, 300)}`,
+          },
+        ],
+        stream: false,
+        max_tokens: 20,
+        temperature: 0.5,
+      }),
+    });
+    if (!response.ok) return "";
+    const json = await response.json();
+    return (json.choices?.[0]?.message?.content ?? "").trim().slice(0, 60);
+  } catch {
+    return "";
+  }
 }
 
 export function isImageFile(file: File): boolean {
@@ -163,7 +187,7 @@ function smartTruncate(text: string, maxChars: number): string {
   const half = Math.floor(maxChars / 2);
   const start = text.slice(0, half);
   const end = text.slice(-half);
-  return `${start}\n\n[... content truncated ...]\n\n${end}`;
+  return `${start}\n\n[... content truncated for length ...]\n\n${end}`;
 }
 
 function isPdfScanned(text: string): boolean {
@@ -323,7 +347,7 @@ export async function fileToBase64(file: File): Promise<string> {
       const result = reader.result as string;
       resolve(result.split(",")[1]);
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error("Failed to read file as base64"));
     reader.readAsDataURL(file);
   });
 }
