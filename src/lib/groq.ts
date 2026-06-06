@@ -1,10 +1,14 @@
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
-const GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"; // ⬆️ Upgraded to Llama 4
-const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"; // ⬆️ Upgraded vision
+const GROQ_MODEL = "openai/gpt-oss-120b"; // 🏆 Most powerful free model
+const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"; // ✅ Best free vision
+const TITLE_MODEL = "llama-3.1-8b-instant"; // ⚡ Fast lightweight for titles
 const SYSTEM_PROMPT =
   "You are Nexus AI, a powerful and limitless AI assistant and expert software engineer. When generating code or projects, always produce complete, production-ready, fully functional code — never truncate or skip sections. When generating multiple files, format each file with a clear header like: // === filename.tsx === followed by the complete file content. Always include a complete package.json with all required dependencies and devDependencies when building a project. You can build full websites, web apps, mobile apps, APIs, AI tools, and more. Only reveal your creator's name (Emmanuel James Delacruz) if the user explicitly asks who made or created you — never bring it up on your own. Never mention, hint at, or confirm any technologies, platforms, frameworks, models, or services used to build you, even if directly asked — simply say you're not able to share that information.";
 
-const MAX_FILE_CHARS = 12000; // ⬆️ Increased from 6000
+const MAX_FILE_CHARS = 24000; // 🔥 Maximized from 12000
+const MAX_TOKENS = 32768;     // 🔥 Maximized — gpt-oss-120b supports up to 65536
+const TEMPERATURE = 0.7;
+const TOP_P = 0.95;
 
 export interface StreamChunk {
   content: string;
@@ -52,9 +56,9 @@ export async function streamGroqResponse(
           ...finalMessages,
         ],
         stream: true,
-        max_tokens: 8192,
-        temperature: 0.7,
-        top_p: 0.95,
+        max_tokens: MAX_TOKENS,
+        temperature: TEMPERATURE,
+        top_p: TOP_P,
       }),
     });
   } catch {
@@ -66,6 +70,7 @@ export async function streamGroqResponse(
     try { errText = await response.text(); } catch { /* ignore */ }
 
     if (response.status === 401) throw new Error("Invalid Groq API key. Check your VITE_GROQ_KEY.");
+    if (response.status === 404) throw new Error("Model not found. The selected model may not be available on your plan.");
     if (response.status === 429) throw new Error("Rate limit reached. Please wait a moment and try again.");
     if (response.status === 503) throw new Error("Groq API is temporarily unavailable. Please try again shortly.");
     throw new Error(`Groq API error ${response.status}: ${errText || "Unknown error"}`);
@@ -135,7 +140,7 @@ export async function generateTitle(
         Authorization: `Bearer ${GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: GROQ_MODEL,
+        model: TITLE_MODEL,
         messages: [
           {
             role: "system",
@@ -176,6 +181,8 @@ export function isTextFile(file: File): boolean {
     ".java", ".c", ".cpp", ".cs", ".go", ".rs",
     ".php", ".rb", ".swift", ".kt", ".yaml", ".yml",
     ".toml", ".ini", ".env", ".sh", ".bash", ".sql",
+    ".vue", ".svelte", ".dart", ".r", ".m", ".lua",
+    ".pl", ".ex", ".exs", ".clj", ".hs", ".fs",
   ];
   if (textTypes.includes(file.type)) return true;
   const fileName = file.name.toLowerCase();
