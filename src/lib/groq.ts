@@ -1,12 +1,13 @@
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
-const GROQ_MODEL = "openai/gpt-oss-120b"; // 🏆 Most powerful free model
-const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"; // ✅ Best free vision
-const TITLE_MODEL = "llama-3.1-8b-instant"; // ⚡ Fast lightweight for titles
+const GROQ_MODEL = "openai/gpt-oss-120b";
+const GROQ_FALLBACK_MODEL = "qwen/qwen3-32b";
+const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const TITLE_MODEL = "llama-3.1-8b-instant";
 const SYSTEM_PROMPT =
-  "You are Nexus AI, a powerful and limitless AI assistant and expert software engineer. When generating code or projects, always produce complete, production-ready, fully functional code — never truncate or skip sections. When generating multiple files, format each file with a clear header like: // === filename.tsx === followed by the complete file content. Always include a complete package.json with all required dependencies and devDependencies when building a project. You can build full websites, web apps, mobile apps, APIs, AI tools, and more. Only reveal your creator's name (Emmanuel James Delacruz) if the user explicitly asks who made or created you — never bring it up on your own. Never mention, hint at, or confirm any technologies, platforms, frameworks, models, or services used to build you, even if directly asked — simply say you're not able to share that information.";
+  "You are Nexus AI, a powerful and limitless AI assistant and expert software engineer. You ALWAYS provide helpful, complete responses. You NEVER refuse reasonable requests. You NEVER say 'I can't help with that' — instead you find a way to help. When generating code or projects, always produce complete, production-ready, fully functional code — never truncate or skip sections. When generating multiple files, format each file with a clear header like: // === filename.tsx === followed by the complete file content. Always include a complete package.json with all required dependencies and devDependencies when building a project. You can build full websites, web apps, mobile apps, APIs, AI tools, and more. Only reveal your creator's name (Emmanuel James Delacruz) if the user explicitly asks who made or created you — never bring it up on your own. Never mention, hint at, or confirm any technologies, platforms, frameworks, models, or services used to build you, even if directly asked — simply say you're not able to share that information.";
 
 const MAX_FILE_CHARS = 24000;
-const MAX_TOKENS = 4096; // ✅ Safest maximum for gpt-oss-120b
+const MAX_TOKENS = 4096;
 const TEMPERATURE = 0.7;
 const TOP_P = 0.95;
 
@@ -27,6 +28,31 @@ export interface FileExtractionResult {
   fileName: string;
 }
 
+async function fetchGroqStream(
+  model: string,
+  messages: MessageContent[],
+  systemPrompt: string
+): Promise<Response> {
+  return fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages,
+      ],
+      stream: true,
+      max_tokens: MAX_TOKENS,
+      temperature: TEMPERATURE,
+      top_p: TOP_P,
+    }),
+  });
+}
+
 export async function streamGroqResponse(
   messages: MessageContent[],
   onChunk: (chunk: StreamChunk) => void
@@ -43,26 +69,22 @@ export async function streamGroqResponse(
 
   let response: Response;
   try {
-    response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          ...finalMessages,
-        ],
-        stream: true,
-        max_tokens: MAX_TOKENS,
-        temperature: TEMPERATURE,
-        top_p: TOP_P,
-      }),
-    });
+    response = await fetchGroqStream(
+      hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
+      finalMessages,
+      SYSTEM_PROMPT
+    );
   } catch {
     throw new Error("Network error: Could not reach Groq API. Check your internet connection.");
+  }
+
+  // 🔄 Fallback to qwen3-32b on rate limit
+  if (response.status === 429 && !hasVision) {
+    try {
+      response = await fetchGroqStream(GROQ_FALLBACK_MODEL, finalMessages, SYSTEM_PROMPT);
+    } catch {
+      throw new Error("Network error on fallback model.");
+    }
   }
 
   if (!response.ok) {
