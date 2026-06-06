@@ -6,7 +6,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import type { Components } from "react-markdown";
 import { Sparkles, User, Copy, Check, RefreshCw, FileText, Image, Play, X, Github, CheckCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, memo, useMemo } from "react";
 import type { Message } from "@/types";
 
 interface MessageBubbleProps {
@@ -16,7 +16,7 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
 }
 
-function CopyButton({ text }: { text: string }) {
+const CopyButton = memo(function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
     await navigator.clipboard.writeText(text);
@@ -28,9 +28,9 @@ function CopyButton({ text }: { text: string }) {
       {copied ? <><Check className="w-3 h-3 text-green-400" /><span className="text-green-400">Copied</span></> : <><Copy className="w-3 h-3" /><span>Copy</span></>}
     </button>
   );
-}
+});
 
-function GitHubPushButton({ code, filename }: { code: string; filename: string }) {
+const GitHubPushButton = memo(function GitHubPushButton({ code, filename }: { code: string; filename: string }) {
   const [status, setStatus] = useState<"idle" | "pushing" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -50,7 +50,6 @@ function GitHubPushButton({ code, filename }: { code: string; filename: string }
       const path = filename || "nexus-output.txt";
       const content = btoa(unescape(encodeURIComponent(code)));
 
-      // Check if file exists
       let sha: string | undefined;
       const checkRes = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
         headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
@@ -89,29 +88,17 @@ function GitHubPushButton({ code, filename }: { code: string; filename: string }
       onClick={handlePush}
       disabled={status === "pushing"}
       className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-all ${
-        status === "success"
-          ? "text-green-400"
-          : status === "error"
-          ? "text-red-400"
-          : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60"
+        status === "success" ? "text-green-400" : status === "error" ? "text-red-400" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60"
       }`}
       title={status === "error" ? errorMsg : "Push to GitHub"}
     >
-      {status === "pushing" ? (
-        <RefreshCw className="w-3 h-3 animate-spin" />
-      ) : status === "success" ? (
-        <CheckCircle className="w-3 h-3" />
-      ) : (
-        <Github className="w-3 h-3" />
-      )}
-      <span>
-        {status === "pushing" ? "Pushing..." : status === "success" ? "Pushed!" : status === "error" ? errorMsg : "Push"}
-      </span>
+      {status === "pushing" ? <RefreshCw className="w-3 h-3 animate-spin" /> : status === "success" ? <CheckCircle className="w-3 h-3" /> : <Github className="w-3 h-3" />}
+      <span>{status === "pushing" ? "Pushing..." : status === "success" ? "Pushed!" : status === "error" ? errorMsg : "Push"}</span>
     </button>
   );
-}
+});
 
-function PreviewModal({ code, onClose }: { code: string; onClose: () => void }) {
+const PreviewModal = memo(function PreviewModal({ code, onClose }: { code: string; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="bg-zinc-900 border border-zinc-700/60 rounded-2xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl">
@@ -121,22 +108,15 @@ function PreviewModal({ code, onClose }: { code: string; onClose: () => void }) 
             <X className="w-5 h-5" />
           </button>
         </div>
-        <iframe
-          className="flex-1 w-full rounded-b-2xl bg-white"
-          srcDoc={code}
-          sandbox="allow-scripts"
-          title="preview"
-        />
+        <iframe className="flex-1 w-full rounded-b-2xl bg-white" srcDoc={code} sandbox="allow-scripts" title="preview" />
       </div>
     </div>
   );
-}
+});
 
 function stripMarkdown(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, (match) => {
-      return match.replace(/```(\w+)?\n?/g, "").replace(/```/g, "");
-    })
+    .replace(/```[\s\S]*?```/g, (match) => match.replace(/```(\w+)?\n?/g, "").replace(/```/g, ""))
     .replace(/`([^`]+)`/g, "$1")
     .replace(/#{1,6}\s+/g, "")
     .replace(/\*\*(.+?)\*\*/g, "$1")
@@ -177,7 +157,8 @@ function parseMessageContent(content: string) {
   return { textPart, imageName, imageUrl, fileName };
 }
 
-const makeMarkdownComponents = (): Components => ({
+// ✅ Defined OUTSIDE component — never recreated
+const markdownComponents: Components = {
   code({ className, children, ...props }) {
     const match = /language-(\w+)/.exec(className ?? "");
     const codeString = String(children).replace(/\n$/, "");
@@ -187,15 +168,7 @@ const makeMarkdownComponents = (): Components => ({
       const language = match?.[1] ?? "text";
       const isHTML = language === "html";
       const filename = isHTML ? "index.html" : `code.${language}`;
-
-      return (
-        <CodeBlock
-          language={language}
-          codeString={codeString}
-          filename={filename}
-          isHTML={isHTML}
-        />
-      );
+      return <CodeBlock language={language} codeString={codeString} filename={filename} isHTML={isHTML} />;
     }
     return <code className="px-1.5 py-0.5 rounded-md bg-zinc-700/60 text-violet-300 text-[0.8125rem] font-mono" {...props}>{children}</code>;
   },
@@ -215,9 +188,9 @@ const makeMarkdownComponents = (): Components => ({
   thead({ children }) { return <thead className="bg-zinc-800/60">{children}</thead>; },
   th({ children }) { return <th className="px-4 py-2.5 text-left font-semibold text-zinc-200 border-b border-zinc-700/50">{children}</th>; },
   td({ children }) { return <td className="px-4 py-2.5 text-zinc-300 border-b border-zinc-700/30 last:border-0">{children}</td>; },
-});
+};
 
-function CodeBlock({ language, codeString, filename, isHTML }: {
+const CodeBlock = memo(function CodeBlock({ language, codeString, filename, isHTML }: {
   language: string;
   codeString: string;
   filename: string;
@@ -233,10 +206,7 @@ function CodeBlock({ language, codeString, filename, isHTML }: {
           <span className="text-xs font-mono text-zinc-500">{language}</span>
           <div className="flex items-center gap-1">
             {isHTML && (
-              <button
-                onClick={() => setPreview(true)}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs text-violet-400 hover:text-violet-300 hover:bg-zinc-700/60 transition-all"
-              >
+              <button onClick={() => setPreview(true)} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-violet-400 hover:text-violet-300 hover:bg-zinc-700/60 transition-all">
                 <Play className="w-3 h-3" />
                 <span>Preview</span>
               </button>
@@ -257,18 +227,22 @@ function CodeBlock({ language, codeString, filename, isHTML }: {
       </div>
     </>
   );
-}
+});
 
-export default function MessageBubble({ message, isLast, onRegenerate, isStreaming }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, isLast, onRegenerate, isStreaming }: MessageBubbleProps) {
   const isAssistant = message.role === "assistant";
   const showRegenerate = isAssistant && isLast && onRegenerate && !isStreaming;
-  const { textPart, imageName, imageUrl, fileName } = parseMessageContent(message.content);
 
-  const copyText = stripMarkdown(
-    textPart || ((!imageUrl && !imageName && !fileName) ? message.content : "")
+  // ✅ Only recompute when message.content changes
+  const { textPart, imageName, imageUrl, fileName } = useMemo(
+    () => parseMessageContent(message.content),
+    [message.content]
   );
 
-  const markdownComponents = makeMarkdownComponents();
+  const copyText = useMemo(() =>
+    stripMarkdown(textPart || ((!imageUrl && !imageName && !fileName) ? message.content : "")),
+    [textPart, imageUrl, imageName, fileName, message.content]
+  );
 
   return (
     <div data-testid={`message-${message.id}`} className={`flex flex-col ${isAssistant ? "items-start" : "items-end"} px-4 py-2 gap-1`}>
@@ -284,25 +258,21 @@ export default function MessageBubble({ message, isLast, onRegenerate, isStreami
             ? "bg-zinc-800/60 text-zinc-100 rounded-tl-sm"
             : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white rounded-tr-sm shadow-lg shadow-violet-900/30 break-words leading-relaxed"
         }`}>
-
           {imageUrl && (
             <img src={imageUrl} alt={imageName ?? "uploaded image"} className="mb-2 rounded-xl max-w-full max-h-64 object-contain border border-white/10" />
           )}
-
           {!imageUrl && imageName && (
             <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-white/10 rounded-xl border border-white/20">
               <Image className="w-4 h-4 flex-shrink-0" />
               <span className="text-xs truncate">{imageName}</span>
             </div>
           )}
-
           {fileName && (
             <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-white/10 rounded-xl border border-white/20">
               <FileText className="w-4 h-4 flex-shrink-0" />
               <span className="text-xs truncate">{fileName}</span>
             </div>
           )}
-
           {textPart ? (
             isAssistant ? (
               <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]} components={markdownComponents}>
@@ -343,4 +313,6 @@ export default function MessageBubble({ message, isLast, onRegenerate, isStreami
       )}
     </div>
   );
-}
+});
+
+export default MessageBubble;
