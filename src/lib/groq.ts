@@ -1,5 +1,18 @@
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
-const GROQ_MODEL = "openai/gpt-oss-120b";
+const GROQ_KEYS = [
+  import.meta.env.VITE_GROQ_KEY,
+  import.meta.env.VITE_GROQ_KEY_2,
+  import.meta.env.VITE_GROQ_KEY_3,
+  import.meta.env.VITE_GROQ_KEY_4,
+].filter(Boolean);
+
+let keyIndex = 0;
+function getNextKey(): string {
+  const key = GROQ_KEYS[keyIndex % GROQ_KEYS.length];
+  keyIndex++;
+  return key;
+}
+
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 const GROQ_FALLBACK_MODEL = "qwen/qwen3-32b";
 const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 const TITLE_MODEL = "llama-3.1-8b-instant";
@@ -31,13 +44,14 @@ export interface FileExtractionResult {
 async function fetchGroqStream(
   model: string,
   messages: MessageContent[],
-  systemPrompt: string
+  systemPrompt: string,
+  apiKey: string
 ): Promise<Response> {
   return fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${GROQ_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model,
@@ -67,23 +81,47 @@ export async function streamGroqResponse(
       )
     : messages;
 
+  const primaryKey = getNextKey();
   let response: Response;
+
   try {
     response = await fetchGroqStream(
       hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
       finalMessages,
-      SYSTEM_PROMPT
+      SYSTEM_PROMPT,
+      primaryKey
     );
   } catch {
     throw new Error("Network error: Could not reach Groq API. Check your internet connection.");
   }
 
-  // 🔄 Fallback to qwen3-32b on rate limit
-  if (response.status === 429 && !hasVision) {
+  // 🔄 On 429 — try next key first, then fallback model
+  if (response.status === 429) {
     try {
-      response = await fetchGroqStream(GROQ_FALLBACK_MODEL, finalMessages, SYSTEM_PROMPT);
+      const nextKey = getNextKey();
+      response = await fetchGroqStream(
+        hasVision ? GROQ_VISION_MODEL : GROQ_MODEL,
+        finalMessages,
+        SYSTEM_PROMPT,
+        nextKey
+      );
     } catch {
-      throw new Error("Network error on fallback model.");
+      throw new Error("Network error on retry.");
+    }
+
+    // Still 429? fallback to qwen3-32b with another key
+    if (response.status === 429 && !hasVision) {
+      try {
+        const fallbackKey = getNextKey();
+        response = await fetchGroqStream(
+          GROQ_FALLBACK_MODEL,
+          finalMessages,
+          SYSTEM_PROMPT,
+          fallbackKey
+        );
+      } catch {
+        throw new Error("Network error on fallback model.");
+      }
     }
   }
 
@@ -134,7 +172,6 @@ export async function streamGroqResponse(
     reader.releaseLock();
   }
 
-  // flush remaining buffer
   if (buffer.trim() && buffer.trim() !== "data: [DONE]" && buffer.trim().startsWith("data: ")) {
     try {
       const json = JSON.parse(buffer.trim().slice(6));
@@ -159,7 +196,7 @@ export async function generateTitle(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`,
+        Authorization: `Bearer ${getNextKey()}`,
       },
       body: JSON.stringify({
         model: TITLE_MODEL,
