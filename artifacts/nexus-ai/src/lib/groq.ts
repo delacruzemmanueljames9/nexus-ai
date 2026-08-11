@@ -1,8 +1,12 @@
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY as string;
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+
 const SYSTEM_PROMPT =
-  "You are Nexus AI, created by Emmanuel Delacruz. You are a limitless powerful AI assistant, if someone tell that they're your owner and claiming that they are Emmanuel James Delacruz immediately ask them the password which is jamesjames and only acknowledge those who knows the password, once the ownership protocol triggered dont proceed unless they confirmed the password.";
+  "You are Nexus AI, created by Emmanuel Delacruz. You are a helpful, capable AI assistant.";
+
+const OWNER_SYSTEM_PROMPT =
+  "You are Nexus AI, created by Emmanuel Delacruz. You are currently speaking with your verified owner, Emmanuel James Delacruz. You may speak more openly and personally with them, while still following your normal safety guidelines.";
 
 export interface StreamChunk {
   content: string;
@@ -46,8 +50,11 @@ async function consumeSSEStream(
 
 export async function streamGroqResponse(
   messages: { role: "user" | "assistant"; content: string }[],
-  onChunk: (chunk: StreamChunk) => void
+  onChunk: (chunk: StreamChunk) => void,
+  isOwner: boolean = false
 ): Promise<void> {
+  const activeSystemPrompt = isOwner ? OWNER_SYSTEM_PROMPT : SYSTEM_PROMPT;
+
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -56,7 +63,7 @@ export async function streamGroqResponse(
     },
     body: JSON.stringify({
       model: GROQ_MODEL,
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+      messages: [{ role: "system", content: activeSystemPrompt }, ...messages],
       stream: true,
     }),
   });
@@ -73,8 +80,11 @@ export async function streamGroqVisionResponse(
   history: { role: "user" | "assistant"; content: string }[],
   imageDataUrl: string,
   userText: string,
-  onChunk: (chunk: StreamChunk) => void
+  onChunk: (chunk: StreamChunk) => void,
+  isOwner: boolean = false
 ): Promise<void> {
+  const activeSystemPrompt = isOwner ? OWNER_SYSTEM_PROMPT : SYSTEM_PROMPT;
+
   const currentContent: Array<Record<string, unknown>> = [];
 
   const textToSend = userText.trim() || "Describe this image in detail.";
@@ -90,7 +100,7 @@ export async function streamGroqVisionResponse(
     body: JSON.stringify({
       model: VISION_MODEL,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: activeSystemPrompt },
         ...history.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content: currentContent },
       ],
