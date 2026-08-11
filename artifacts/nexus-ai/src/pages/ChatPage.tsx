@@ -5,10 +5,12 @@ import { useAuth } from "@/context/AuthContext";
 import type { Conversation, Message } from "@/types";
 import Sidebar from "@/components/Sidebar";
 import MessageBubble from "@/components/MessageBubble";
-import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X } from "lucide-react";
+import { Send, Loader2, Menu, Sparkles, StopCircle, Paperclip, X, Lock, LockOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { parseMessageContent } from "@/lib/messageUtils";
 import type { ImageAttachment } from "@/lib/messageUtils";
+
+const OWNER_PASSWORD = "jamesjames";
 
 async function resizeImageToBase64(file: File, maxDimension = 1024): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -57,6 +59,7 @@ export default function ChatPage() {
   const [attachedImage, setAttachedImage] = useState<ImageAttachment | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const abortRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -215,6 +218,23 @@ export default function ChatPage() {
     );
   };
 
+  const handleUnlockOwner = () => {
+    if (isOwner) {
+      // Allow toggling back off
+      setIsOwner(false);
+      toast({ title: "Owner mode off" });
+      return;
+    }
+    const input = window.prompt("Enter owner password:");
+    if (input === null) return; // cancelled
+    if (input.trim() === OWNER_PASSWORD) {
+      setIsOwner(true);
+      toast({ title: "Owner mode unlocked" });
+    } else {
+      toast({ title: "Incorrect password", variant: "destructive" });
+    }
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -315,11 +335,12 @@ export default function ChatPage() {
       };
 
       if (imageToSend) {
-        await streamGroqVisionResponse(historyMessages, imageToSend.dataUrl, trimmed, onChunk);
+        await streamGroqVisionResponse(historyMessages, imageToSend.dataUrl, trimmed, onChunk, isOwner);
       } else {
         await streamGroqResponse(
           [...historyMessages, { role: "user" as const, content: trimmed }],
-          onChunk
+          onChunk,
+          isOwner
         );
       }
     } catch (err: unknown) {
@@ -405,14 +426,15 @@ export default function ChatPage() {
           historyBeforeLastUser,
           parsedLastUser.imageUrl,
           parsedLastUser.text,
-          onChunk
+          onChunk,
+          isOwner
         );
       } else {
         const history = messagesWithoutLast.map((m) => {
           const p = parseMessageContent(m.content);
           return { role: m.role as "user" | "assistant", content: p.text };
         });
-        await streamGroqResponse(history, onChunk);
+        await streamGroqResponse(history, onChunk, isOwner);
       }
     } catch (err: unknown) {
       if (!abortRef.current) {
@@ -497,6 +519,18 @@ export default function ChatPage() {
               ? conversations.find((c) => c.id === activeConversationId)?.title ?? "Conversation"
               : "New chat"}
           </span>
+          <button
+            data-testid="button-owner-toggle"
+            onClick={handleUnlockOwner}
+            title={isOwner ? "Owner mode active — click to lock" : "Unlock owner mode"}
+            className={`flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg transition-colors touch-manipulation ${
+              isOwner
+                ? "text-violet-400 hover:text-violet-300"
+                : "text-zinc-600 hover:text-zinc-300"
+            }`}
+          >
+            {isOwner ? <LockOpen className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+          </button>
         </div>
 
         {/* Messages area */}
